@@ -523,7 +523,7 @@
     e.preventDefault(); gateMsg('');
     if (!sb) return gateMsg('Sign-in is not available right now. Check your internet connection and reload.');
     const btn = $('#gateSignIn'); btn.disabled = true; btn.textContent = 'Signing in…';
-    const { data, error } = await sb.auth.signInWithPassword({ email: $('#g-email').value.trim(), password: $('#g-pass').value });
+    const { data, error } = await sb.auth.signInWithPassword({ email: $('#g-email').value.trim(), password: $('#g-pass').value.trim() });
     btn.disabled = false; btn.textContent = 'Sign in';
     if (error) return gateMsg(/invalid/i.test(error.message) ? 'Wrong email or password.' : error.message);
     try { await startLive(data.session); } catch (err) { console.error(err); gateMsg('Signed in, but the data did not load. Reload and try again.'); }
