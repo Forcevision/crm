@@ -60,7 +60,7 @@
   const SB_URL = 'https://hpwfkgoduruigsikqtre.supabase.co';
   const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhwd2ZrZ29kdXJ1aWdzaWtxdHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU1NzQwNjcsImV4cCI6MjExMTE1MDA2N30._Is4TD8na5wFMqfnlF92nGA_pH45J313pPkXtcSGW-o'; // public anon key; data is protected by sign-in and row-level security
   let LIVE = false, sb = null, me = null, myEmail = '', teamNames = {};
-  const mem = {}; // the preview blocks browser storage, so the sign-in lives in memory (sign in again after a reload)
+  const mem = {}; // the preview blocks browser storage, so the sign-in lives in memory (sign in again after a reload); the team link keeps it
   const store = { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } };
   const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
   const dealToDb = x => ({ contact_id: x.contactId || null, title: x.title, owner: x.owner, site: x.site, needs: x.needs, value: x.value || 0, stage: x.stage, next_action: x.nextAction, follow_up: x.followUp || null, proposal: x.proposal, notes: x.notes, draft: x.draft || null, trello_id: x.trelloId || null, archived: !!x.archived, ...(companyId ? { company_id: companyId } : {}) });
@@ -536,7 +536,9 @@
   (async () => {
     try {
       if (window.supabase) {
-        sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { storage: store, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+        // On the team link (GitHub Pages) the browser keeps the sign-in until Sign out; in the preview it lives in memory only.
+        const keep = /\.github\.io$/.test(location.hostname);
+        sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { ...(keep ? {} : { storage: store }), persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
         const { data } = await sb.auth.getSession();
         if (data.session) return await startLive(data.session);
       }
