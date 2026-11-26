@@ -258,3 +258,8 @@ button.danger{color:var(--red);border-color:#f6cfc8}
 .note-email summary{cursor:pointer}
 .note-email .email-meta{font-size:12px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
 .note-email .email-body{white-space:pre-wrap;margin-top:6px;font-size:14px;overflow-wrap:anywhere}
+.sig-preview{border:1px dashed var(--border);border-radius:8px;padding:10px 12px;font-size:13px;background:#fff;color:#111;overflow-x:auto;margin-top:6px}
+.sig-preview[hidden]{display:none}
+.sig-preview img,.sig-edit img{max-width:100%;height:auto}
+.sig-edit{min-height:120px;max-height:320px;overflow:auto;border:1px solid var(--border-strong);border-radius:8px;padding:10px 12px;background:#fff;color:#111;font-size:13px}
+.sig-edit:focus{outline:2px solid var(--accent, #1f6feb);outline-offset:1px}

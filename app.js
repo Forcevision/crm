@@ -436,8 +436,25 @@
   // ---------- Email from the CRM ----------
   // Sent by the notify function from the signed-in person's own forcevision.ca mailbox (a copy goes to their Sent folder),
   // then saved in the deal notes and the contact's notes so the whole team sees it. The demo sends nothing.
-  let mailboxOk = null, mySig = '';
+  let mailboxOk = null, mySig = '', mySigHtml = '';
   const sigText = () => mySig || `${me || ''}\nForceVision Inc.`;
+  const sigHtml = () => mySigHtml || esc(sigText()).replace(/\n/g, '<br>');
+  // Signatures pasted from Outlook or webmail keep their logo, colours and links; anything that could run code is removed.
+  const SAFE_TAGS = new Set('A B BR DIV FONT HR I IMG LI OL P SPAN STRONG EM U UL TABLE TBODY THEAD TR TD TH CENTER SMALL SUB SUP H1 H2 H3 H4'.split(' '));
+  const SAFE_ATTR = new Set(['href', 'src', 'alt', 'width', 'height', 'style', 'color', 'size', 'face', 'align', 'valign', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'title', 'target']);
+  function cleanHtml(html) {
+    const root = new DOMParser().parseFromString(`<div>${String(html).replace(/<!--[\s\S]*?-->/g, '')}</div>`, 'text/html').body.firstChild;
+    const walk = el => [...el.children].forEach(ch => {
+      if (/^(SCRIPT|STYLE|META|LINK|TITLE|HEAD|IFRAME|OBJECT|EMBED|FORM|INPUT|BUTTON|SVG)$/i.test(ch.tagName)) { ch.remove(); return; }
+      walk(ch);
+      if (!SAFE_TAGS.has(ch.tagName)) { ch.replaceWith(...ch.childNodes); return; }
+      [...ch.attributes].forEach(a => { const n = a.name.toLowerCase(), v = a.value.trim();
+        if (!SAFE_ATTR.has(n) || ((n === 'href' || n === 'src') && !/^(https?:|mailto:|tel:)/i.test(v)) || (n === 'style' && /expression|url\(|javascript/i.test(v))) ch.removeAttribute(a.name); });
+    });
+    walk(root);
+    return root.innerHTML.trim();
+  }
+  const bodyHtml = t => `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45">${esc(t).replace(/\n/g, '<br>')}</div>`;
   async function callFn(body) {
     const { data, error } = await sb.functions.invoke('notify', { body });
     if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch { /* keep message */ } throw new Error(m); }
@@ -456,11 +473,12 @@
         <div class="field full"><label for="m-to">To</label><input id="m-to" value="${esc(c.email)}"></div>
         <div class="field full"><label for="m-cc">Cc (optional)</label><input id="m-cc" placeholder="Separate addresses with commas"></div>
         <div class="field full"><label for="m-subject">Subject</label><input id="m-subject"></div>
-        <div class="field full"><label for="m-body">Message</label><textarea id="m-body" style="min-height:200px">${esc(`${firstName(c) ? `Hi ${firstName(c)},` : 'Hello,'}\n\n\n\n${sigText()}`)}</textarea></div>
+        <div class="field full"><label for="m-body">Message</label><textarea id="m-body" style="min-height:200px">${esc(`${firstName(c) ? `Hi ${firstName(c)},` : 'Hello,'}\n\n`)}</textarea></div>
+        <div class="field full"><label class="inline-check"><input type="checkbox" id="m-usesig" checked> Add my signature</label><div class="sig-preview" id="sigPreview">${sigHtml()}</div></div>
         <div class="actions"><button class="primary" id="mSend">Send email</button><a class="secondary btn-link" id="mApp" href="#">Use my email app instead (not tracked)</a><button class="secondary" id="mSigBtn">My signature</button></div>
         <div id="sigBox" class="log-call" hidden>
-          <div class="field full"><label for="sig-text">My signature</label><textarea id="sig-text" style="min-height:120px" placeholder="Name&#10;Title&#10;Phone&#10;forcevision.ca">${esc(sigText())}</textarea></div>
-          <p class="import-note">Added to the end of every email you send from the CRM. Only you can change yours.</p>
+          <div class="field full"><label id="sig-label">My signature</label><div id="sig-rich" class="sig-edit" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="sig-label">${sigHtml()}</div></div>
+          <p class="import-note">To keep your logo and colours, copy your signature from an email in Outlook or webmail and paste it here. It is added to the end of every email you send from the CRM. Only you can change yours.</p>
           <div class="actions"><button class="primary" id="sigSave">Save signature</button></div>
         </div>
       </div>
@@ -510,18 +528,20 @@
       box.scrollIntoView({ block: 'nearest' }); focus();
     });
     wireConnect(() => $('#m-subject').focus());
-    $('#mSigBtn').onclick = () => { $('#sigBox').hidden = !$('#sigBox').hidden; if (!$('#sigBox').hidden) $('#sig-text').focus(); };
+    $('#mSigBtn').onclick = () => { $('#sigBox').hidden = !$('#sigBox').hidden; if (!$('#sigBox').hidden) $('#sig-rich').focus(); };
     $('#sigSave').onclick = async e => {
-      const old = sigText(), sig = $('#sig-text').value.replace(/\s+$/, '');
-      if (LIVE) { e.target.disabled = true; const { error } = await sb.rpc('crm_set_signature', { sig }); e.target.disabled = false; if (error) { toast('Signature not saved. Try again.'); return; } }
-      mySig = sig; const b = $('#m-body').value.replace(/\s+$/, '');
-      if (b.endsWith(old)) $('#m-body').value = b.slice(0, b.length - old.length) + sigText();
-      else if (!b.endsWith(sigText())) $('#m-body').value = `${b}\n\n${sigText()}`;
-      $('#sigBox').hidden = true; toast('Signature saved');
+      const ed = $('#sig-rich'), html = cleanHtml(ed.innerHTML), sig = ed.innerText.replace(/\n{3,}/g, '\n\n').trim();
+      const local = [...ed.querySelectorAll('img')].some(i => !/^https?:/i.test(i.getAttribute('src') || ''));
+      if (LIVE) { e.target.disabled = true; const { error } = await sb.rpc('crm_set_signature', { sig, sig_html: sig ? html : '' }); e.target.disabled = false; if (error) { toast('Signature not saved. Try again.'); return; } }
+      mySig = sig; mySigHtml = sig ? html : '';
+      $('#sigPreview').innerHTML = sigHtml(); $('#sigBox').hidden = true;
+      toast(local ? 'Saved, but the logo is not a web link, so it may not show. Copy it from a received email instead.' : 'Signature saved');
     };
     $('#mApp').onclick = e => { e.currentTarget.href = mailHref($('#m-to').value, $('#m-subject').value, $('#m-body').value); };
+    $('#m-usesig').onchange = e => { $('#sigPreview').hidden = !e.target.checked; };
     $('#mSend').onclick = async e => {
-      const n = await sendEmail(e.target, x, c, { to: $('#m-to').value, cc: $('#m-cc').value, subject: $('#m-subject').value.trim(), text: $('#m-body').value });
+      const body = $('#m-body').value.replace(/\s+$/, ''), sig = $('#m-usesig').checked;
+      const n = await sendEmail(e.target, x, c, { to: $('#m-to').value, cc: $('#m-cc').value, subject: $('#m-subject').value.trim(), text: sig ? `${body}\n\n${sigText()}` : body, html: `${bodyHtml(body)}${sig ? `<br>${sigHtml()}` : ''}` });
       if (n) { render(); after(); }
     };
   }
@@ -808,10 +828,10 @@
   const gateMsg = (m, ok) => { const el = $('#gateMsg'); el.textContent = m; el.hidden = !m; el.className = ok ? 'gate-ok' : 'import-error'; };
   async function startLive(session) {
     const email = (session.user.email || '').toLowerCase();
-    const [m, co] = await Promise.all([sb.from('members').select('company_id,email,name,is_owner,signature'), sb.from('companies').select('id,name').order('id')]);
+    const [m, co] = await Promise.all([sb.from('members').select('company_id,email,name,is_owner,signature,signature_html'), sb.from('companies').select('id,name').order('id')]);
     const mine = !m.error && !co.error ? m.data.filter(r => r.email.toLowerCase() === email) : [];
     if (!mine.length) { await sb.auth.signOut(); $('#gate').hidden = false; gateMsg('This email is not on any company team list. Ask Zoltan to add you.'); return; }
-    members = m.data; myEmail = email; mySig = mine[0].signature || '';
+    members = m.data; myEmail = email; mySig = mine[0].signature || ''; mySigHtml = mine[0].signature_html || '';
     myCompanies = co.data.filter(c => mine.some(r => r.company_id === c.id));
     members.forEach(t => { teamNames[t.email.toLowerCase()] = t.name; });
     await setCompany(myCompanies[0].id);
