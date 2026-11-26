@@ -39,6 +39,13 @@
   const OWNERS = { 11: 'Zoltan', 12: 'Zoltan', 15: 'Zoltan', 17: 'Zoltan', 13: 'Motasim', 14: 'Motasim', 20: 'Motasim', 16: 'Maham', 18: 'Maham', 19: 'Maham' };
   deals.forEach(x => x.owner = OWNERS[x.id] || TEAM[0]);
   deals.forEach(x => { if (x.stage === 'Won') x.wonAt = d(-6) + 'T12:00:00'; });
+  const at = (n, h, m = 0) => { const t = new Date(today); t.setDate(t.getDate() + n); t.setHours(h, m, 0, 0); return t.toISOString(); };
+  let acts = [
+    { id: 1, dealId: 12, kind: 'meeting', title: 'Site visit: Lakeview Steel', startsAt: at(1, 10), endsAt: at(1, 11, 30), location: '', details: 'Walk the yard and loading docks with the plant manager.', assignees: ['Zoltan', 'Motasim'], inviteCustomer: true, customerEmail: '', remind: 60, logged: false, done: false, status: 'scheduled', createdBy: 'Zoltan', createdAt: at(-1, 9) },
+    { id: 2, dealId: 11, kind: 'task', title: 'Send revised camera layout', startsAt: at(0, 15), endsAt: null, location: '', details: '', assignees: ['Zoltan'], inviteCustomer: false, customerEmail: '', remind: 60, logged: false, done: false, status: 'scheduled', createdBy: 'Zoltan', createdAt: at(-2, 9) },
+    { id: 3, dealId: 13, kind: 'task', title: 'Call back about NVR storage', startsAt: at(-1, 11), endsAt: null, location: '', details: '', assignees: ['Motasim'], inviteCustomer: false, customerEmail: '', remind: 30, logged: false, done: false, status: 'scheduled', createdBy: 'Maham', createdAt: at(-3, 9) },
+  ];
+  acts[0].location = (deals.find(x => x.id === 12) || {}).site || '';
 
   // ---------- Helpers ----------
   const $ = s => document.querySelector(s);
@@ -77,9 +84,12 @@
     if (c.error || x.error) throw (c.error || x.error);
     contacts = c.data.map(r => ({ id: r.id, company: r.company, name: r.name || '', title: r.title || '', email: r.email || '', phone: r.phone || '', address: r.address || '', notes: r.notes || '', log: r.log || [], createdAt: r.created_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '', trelloId: r.trello_id || undefined }));
     deals = x.data.map(dealFromDb);
+    const a = await sb.from('activities').select('*').eq('company_id', companyId).order('starts_at');
+    if (a.error) throw a.error;
+    acts = a.data.map(actFromDb);
   }
   function failed(err) { console.error(err); toast('Not saved. Check your connection and try again.'); loadAll().then(render).catch(() => {}); }
-  function saveDeal(x) { if (!LIVE) return; x.updatedBy = myEmail; x.updatedAt = new Date().toISOString(); sb.from('deals').update(dealToDb(x)).eq('id', x.id).then(({ error }) => error && failed(error)); }
+  function saveDeal(x) { if (!LIVE) return Promise.resolve(); x.updatedBy = myEmail; x.updatedAt = new Date().toISOString(); return sb.from('deals').update(dealToDb(x)).eq('id', x.id).then(({ error }) => error && failed(error)); }
   function saveContact(c) { if (!LIVE) return; c.updatedBy = myEmail; c.updatedAt = stamp(); sb.from('contacts').update(contactToDb(c)).eq('id', c.id).then(({ error }) => error && failed(error)); }
   async function insertRows(table, rows) { const { data, error } = await sb.from(table).insert(rows).select('id'); if (error) throw error; return data.map(r => r.id); }
 
@@ -123,6 +133,8 @@
         <div class="row-meta">${duePill(x)}</div></li>`;
     };
     const group = (label, items) => items.length ? `<div class="section-label">${label} · ${items.length}</div>${items.map(taskRow).join('')}` : '';
+    const soon = new Date(today.getTime() + 2 * DAY);
+    const agenda = acts.filter(a => a.status !== 'cancelled' && !a.done && !a.logged && mineAct(a) && new Date(a.startsAt) < soon && !(deals.find(x => x.id === a.dealId) || {}).archived).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
     const tasks = group('Overdue', overdue) + group('Due today', due) + group('Next 7 days', upcoming);
 
     $('#view').innerHTML = `
@@ -132,6 +144,7 @@
         <div class="kpi"><div class="label">Open pipeline (CAD)</div><div class="value num">${money(pipelineValue)}</div></div>
         <div class="kpi"><div class="label">Won (CAD)</div><div class="value num">${money(won)}</div></div>
       </div>
+      ${agenda.length ? `<div class="panel today-acts"><div class="panel-head"><h2>Tasks and meetings</h2><span class="count">${agenda.length}</span></div><ul class="list">${agenda.map(a => actRow(a, true)).join('')}</ul></div>` : ''}
       <div class="grid-2">
         <div class="panel"><div class="panel-head"><h2>Who needs attention</h2><span class="count">${overdue.length + due.length + upcoming.length} tasks</span></div>
           <ul class="list">${tasks || '<li class="empty">No follow-ups. You are caught up.</li>'}</ul></div>
@@ -288,8 +301,8 @@
 
   function render() {
     document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-    $('#viewTitle').textContent = { today: 'Today', pipeline: 'Pipeline', contacts: 'Contacts', assistant: 'Sales Assistant', reports: 'Reports' }[view];
-    ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant, reports: renderReports })[view]();
+    $('#viewTitle').textContent = { today: 'Today', pipeline: 'Pipeline', contacts: 'Contacts', assistant: 'Sales Assistant', reports: 'Reports', calendar: 'Calendar' }[view];
+    ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant, reports: renderReports, calendar: renderCalendar })[view]();
   }
 
   const nameOf = email => teamNames[(email || '').toLowerCase()] || email;
@@ -337,8 +350,12 @@
         <div id="logCallBox" class="log-call" hidden>
           <div class="field full"><label for="callNote">How did the call go?</label><textarea id="callNote" placeholder="e.g. Spoke with Jeff, install booked for Friday"></textarea></div>
           <div class="field"><label for="callFollow">Next follow-up</label><input id="callFollow" type="date" value="${d(3)}"></div>
+          <label class="inline-check"><input type="checkbox" id="callTask"> Also make it a task for ${esc(x.owner || 'the assigned person')} (9:00 AM, with an email reminder)</label>
           <div class="actions"><button class="primary" id="saveCall">Save call note</button></div>
         </div>
+        <h3>Tasks and meetings</h3>
+        <ul class="list act-list">${actsOf(x.id).map(a => actRow(a, false)).join('') || '<li class="empty">No tasks or meetings yet.</li>'}</ul>
+        <div class="actions"><button class="secondary" id="addTask">+ Task</button><button class="secondary" id="addMeeting">+ Meeting</button><button class="secondary" id="logMeeting">Log past meeting</button></div>
         <h3>Activity notes</h3>
         ${noteList(x.notes)}
         <div class="note-add"><input id="noteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="addNote">Add</button></div>`}
@@ -351,7 +368,12 @@
         const nd = { notes: [], ...v, createdAt: stamp() }; note(nd, `Deal created, assigned to ${v.owner}`);
         if (LIVE) { e.target.disabled = true; try { [nd.id] = await insertRows('deals', [dealToDb(nd)]); } catch (err) { e.target.disabled = false; return failed(err); } } else nd.id = ++uid;
         deals.push(nd); toast('Deal created');
-      } else { logChanges(x, v); Object.assign(x, v); saveDeal(x); toast('Saved'); }
+        if (LIVE && nd.owner !== me) notify({ action: 'assigned', deal_id: nd.id }).then(r => r && r.sent && toast(`Deal created · ${nd.owner} was emailed`));
+      } else {
+        const reassigned = v.owner !== x.owner;
+        logChanges(x, v); Object.assign(x, v); toast('Saved');
+        saveDeal(x).then(() => { if (LIVE && reassigned && x.owner !== me) notify({ action: 'assigned', deal_id: x.id }).then(r => r && r.sent && toast(`Saved · ${x.owner} was emailed`)); });
+      }
       closeDrawer(); render();
     };
     if (!isNew) {
@@ -362,9 +384,18 @@
       $('#logCallBtn').onclick = showLog;
       const callLink = document.querySelector('#drawerBody [data-call]');
       if (callLink) callLink.addEventListener('click', () => setTimeout(showLog, 300));
-      $('#saveCall').onclick = () => { const t = $('#callNote').value.trim(); note(x, `Call${c.name ? ` with ${c.name}` : ''}${t ? `: ${t}` : ''}`); if ($('#callFollow').value && $('#callFollow').value !== x.followUp) { note(x, `Follow-up date: ${fmtDate($('#callFollow').value)}`); x.followUp = $('#callFollow').value; } saveDeal(x); toast('Call logged'); render(); openDeal(x.id); };
+      $('#saveCall').onclick = async () => { const t = $('#callNote').value.trim(); note(x, `Call${c.name ? ` with ${c.name}` : ''}${t ? `: ${t}` : ''}`); if ($('#callFollow').value && $('#callFollow').value !== x.followUp) { note(x, `Follow-up date: ${fmtDate($('#callFollow').value)}`); x.followUp = $('#callFollow').value; } saveDeal(x);
+        if ($('#callTask').checked && $('#callFollow').value) {
+          const tk = { id: null, dealId: x.id, kind: 'task', title: x.nextAction && x.nextAction !== 'Set next step' ? x.nextAction : `Follow up with ${c.name || c.company || 'customer'}`, startsAt: new Date(`${$('#callFollow').value}T09:00`).toISOString(), endsAt: null, location: '', details: t, assignees: [x.owner || TEAM[0]], inviteCustomer: false, customerEmail: '', remind: 0, logged: false, done: false, status: 'scheduled', createdBy: me || '', createdAt: stamp() };
+          if (LIVE) { try { [tk.id] = await insertRows('activities', [{ ...actToDb(tk), created_by: me || '' }]); } catch (err) { return failed(err); } } else tk.id = ++uid;
+          acts.push(tk); note(x, `Task: ${tk.title}, due ${fmtWhen(tk.startsAt)}, assigned to ${tk.assignees[0]}`); saveDeal(x); notify({ action: 'invite', id: tk.id });
+        }
+        toast('Call logged'); render(); openDeal(x.id); };
       $('#archDeal').onclick = () => { x.archived = !x.archived; note(x, x.archived ? 'Archived' : 'Restored from archive'); saveDeal(x); toast(x.archived ? 'Archived. Pipeline › Show archived to restore it.' : 'Restored'); closeDrawer(); render(); };
       $('#addNote').onclick = add;
+      $('#addTask').onclick = () => openActivity(x.id, 'task');
+      $('#addMeeting').onclick = () => openActivity(x.id, 'meeting');
+      $('#logMeeting').onclick = () => openActivity(x.id, 'meeting', null, true);
       $('#noteText').onkeydown = e => { if (e.key === 'Enter') add(); };
     }
   }
@@ -377,6 +408,143 @@
     toast('Marked done · next check in 3 days');
     render();
     if (fromDrawer) openDeal(x.id);
+  }
+
+  // ---------- Tasks and meetings (activities) ----------
+  // A task has a due time and a person; a meeting has a time, place and team attendees and sends calendar invites.
+  // Emails (invites, reminders, assignment) are sent by the Supabase function "notify" from crm@forcevision.ca; the demo sends nothing.
+  const REMIND = [[null, 'No reminder'], [0, 'At the start time'], [30, '30 minutes before'], [60, '1 hour before'], [1440, '1 day before']];
+  const DURS = [[30, '30 min'], [60, '1 hour'], [90, '1.5 hours'], [120, '2 hours'], [180, '3 hours'], [240, 'Half day']];
+  const actFromDb = r => ({ id: r.id, dealId: r.deal_id, kind: r.kind, title: r.title, startsAt: r.starts_at, endsAt: r.ends_at, location: r.location || '', details: r.details || '', assignees: r.assignees || [], inviteCustomer: !!r.invite_customer, customerEmail: r.customer_email || '', remind: r.remind_minutes, logged: !!r.logged, done: !!r.done, status: r.status, createdBy: r.created_by || '', createdAt: r.created_at, inviteSentAt: r.invite_sent_at });
+  const actToDb = a => ({ deal_id: a.dealId, kind: a.kind, title: a.title, starts_at: a.startsAt, ends_at: a.endsAt, location: a.location, details: a.details, assignees: a.assignees, invite_customer: a.inviteCustomer, customer_email: a.customerEmail, remind_minutes: a.remind, logged: a.logged, done: a.done, status: a.status, ...(companyId ? { company_id: companyId } : {}) });
+  async function notify(body) {
+    if (!LIVE) return null;
+    try { const { data, error } = await sb.functions.invoke('notify', { body }); if (error) throw error; return data; }
+    catch (err) { console.error(err); toast('Saved, but the email did not go out. Try again later.'); return null; }
+  }
+  const isoLocal = iso => { const t = new Date(iso); return { date: localDay(iso), time: `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}` }; };
+  const timeOnly = iso => new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
+  const actsOf = dealId => acts.filter(a => a.dealId === dealId && a.status !== 'cancelled').sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const mineAct = a => who === 'all' || a.assignees.includes(who);
+  const actLate = a => a.kind === 'task' && !a.done && new Date(a.startsAt) < new Date();
+  const actLabel = a => a.kind === 'task' ? 'Task' : a.logged ? 'Meeting (logged)' : 'Meeting';
+  const actRow = (a, showDeal, timeOnlyPill) => {
+    const deal = deals.find(x => x.id === a.dealId); const c = deal ? contactOf(deal) : {};
+    const sub = [showDeal && deal ? (c.company || deal.title) : '', a.kind === 'meeting' && a.location ? a.location : '', a.assignees.join(', ')].filter(Boolean).join(' · ');
+    return `<li class="row act-row${a.done ? ' is-done' : ''}" data-act="${a.id}">
+      ${a.kind === 'task' ? `<button class="check${a.done ? ' checked' : ''}" data-actdone="${a.id}" aria-label="${a.done ? 'Mark task not done' : 'Mark task done'}" title="${a.done ? 'Done' : 'Mark done'}">${a.done ? '✓' : ''}</button>` : `<span class="act-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v15H4zM4 9h16M9 3v4M15 3v4"/></svg></span>`}
+      <div class="row-main"><div class="row-title">${esc(a.title)}</div><div class="row-sub">${esc(actLabel(a))}${sub ? ' · ' + esc(sub) : ''}</div></div>
+      <div class="row-meta"><span class="pill ${actLate(a) ? 'red' : a.kind === 'meeting' && !a.logged ? 'blue' : ''}">${esc(timeOnlyPill && !actLate(a) ? timeOnly(a.startsAt) : fmtWhen(a.startsAt))}</span></div></li>`;
+  };
+
+  function openActivity(dealId, kind, id, logged) {
+    const deal = deals.find(x => x.id === dealId); const c = deal ? contactOf(deal) : {};
+    const old = id ? acts.find(a => a.id === id) : null;
+    const isNew = !old;
+    const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(10, 0, 0, 0);
+    if (logged) { start.setTime(Date.now()); start.setMinutes(0, 0, 0); }
+    const a = old ? { ...old, assignees: [...old.assignees] } : { id: null, dealId, kind, logged: !!logged, done: !!logged, status: 'scheduled', startsAt: start.toISOString(), endsAt: kind === 'meeting' ? new Date(start.getTime() + 3600000).toISOString() : null, title: kind === 'task' ? `Follow up with ${c.name || c.company || 'customer'}` : `Site visit: ${c.company || deal.title}`, location: deal.site || c.address || '', details: '', assignees: [...new Set([deal.owner, me].filter(n => n && TEAM.includes(n)))], inviteCustomer: false, customerEmail: c.email || '', remind: logged ? null : 60 };
+    if (!a.assignees.length) a.assignees = [deal.owner || TEAM[0]];
+    const { date, time } = isoLocal(a.startsAt);
+    const dur = a.endsAt ? Math.round((new Date(a.endsAt) - new Date(a.startsAt)) / 60000) : 60;
+    const meeting = a.kind === 'meeting', planned = !a.logged;
+    const heading = isNew ? (meeting ? (planned ? 'Schedule meeting' : 'Log a past meeting') : 'New task') : `Edit ${actLabel(a).toLowerCase()}`;
+    openDrawer(heading, `
+      <p class="draft-meta">${esc(c.company || '')}${deal ? ' · ' + esc(deal.title) : ''}${old && old.createdBy ? ` · created by ${esc(old.createdBy)}, ${esc(fmtWhen(old.createdAt))}` : ''}</p>
+      <form id="actForm" class="fields">
+        <div class="field full"><label for="a-title">${meeting ? 'Meeting title' : 'Task'}</label><input id="a-title" required value="${esc(a.title)}"></div>
+        <div class="field"><label for="a-date">${meeting ? 'Date' : 'Due date'}</label><input id="a-date" type="date" value="${esc(date)}"></div>
+        <div class="field"><label for="a-time">${meeting ? 'Start time' : 'Due time'}</label><input id="a-time" type="time" step="900" value="${esc(time)}"></div>
+        ${meeting ? `<div class="field"><label for="a-dur">Length</label><select id="a-dur">${DURS.map(([m, l]) => `<option value="${m}" ${m === dur ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label for="a-loc">Where</label><input id="a-loc" value="${esc(a.location)}" placeholder="Site address, office or phone"></div>` : ''}
+        <fieldset class="field full team-pick"><legend>${meeting ? 'Team attending' : 'Assigned to'}</legend>${TEAM.map(t => `<label><input type="checkbox" name="who" value="${esc(t)}" ${a.assignees.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('')}</fieldset>
+        ${planned ? `<div class="field"><label for="a-remind">Email reminder</label><select id="a-remind">${REMIND.map(([m, l]) => `<option value="${m ?? ''}" ${m === a.remind ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
+        ${meeting && planned ? `<div class="field full"><label class="inline-check"><input type="checkbox" id="a-cust" ${a.inviteCustomer ? 'checked' : ''} ${c.email ? '' : 'disabled'}> Send invite to customer${c.email ? ` (${esc(c.email)})` : ' (no email on this contact)'}</label></div>` : ''}
+        <div class="field full"><label for="a-details">${meeting && planned ? 'Description (goes in the invite)' : 'Notes'}</label><textarea id="a-details">${esc(a.details)}</textarea></div>
+      </form>
+      <p class="import-note">${meeting && planned ? 'The team attending gets a calendar invite by email (works with Outlook, Google and iPhone calendars). The customer gets one only if you tick the box, and sees the title, time, place and description.' : planned ? 'The person assigned gets an email when you give them the task, and a reminder if you pick one.' : 'Logged meetings are saved to the lead. No emails are sent.'}${LIVE ? '' : ' Demo: no emails are sent.'}</p>
+      <div class="actions"><button class="primary" id="saveAct">${isNew ? (meeting ? (planned ? 'Schedule and send invites' : 'Log meeting') : 'Create task') : (meeting && planned ? 'Save and send update' : 'Save')}</button>
+        <button class="secondary" id="backAct">Back to lead</button>
+        ${!isNew && a.kind === 'task' ? `<button class="secondary" id="doneAct">${a.done ? 'Mark not done' : 'Mark done'}</button>` : ''}
+        ${!isNew && meeting && planned && a.status !== 'cancelled' ? '<button class="secondary danger" id="cancelAct">Cancel meeting</button>' : ''}</div>`);
+    $('#backAct').onclick = () => deal ? openDeal(deal.id) : closeDrawer();
+    $('#saveAct').onclick = async e => {
+      const title = $('#a-title').value.trim();
+      if (!title) { $('#a-title').focus(); return toast('Add a title'); }
+      if (!$('#a-date').value || !$('#a-time').value) return toast('Pick a date and time');
+      const people = [...document.querySelectorAll('[name=who]:checked')].map(i => i.value);
+      if (!people.length) return toast(meeting ? 'Pick who is attending' : 'Pick who the task is for');
+      const s = new Date(`${$('#a-date').value}T${$('#a-time').value}`);
+      const v = { title, startsAt: s.toISOString(), assignees: people, details: $('#a-details').value.trim() };
+      if (meeting) { v.endsAt = new Date(s.getTime() + +$('#a-dur').value * 60000).toISOString(); v.location = $('#a-loc').value.trim(); }
+      if (planned) v.remind = $('#a-remind').value === '' ? null : +$('#a-remind').value;
+      if (meeting && planned) { v.inviteCustomer = !!$('#a-cust').checked && !!c.email; v.customerEmail = c.email || ''; }
+      const moved = old && v.startsAt !== old.startsAt;
+      const peopleAdded = old && people.some(p => !old.assignees.includes(p));
+      Object.assign(a, v);
+      e.target.disabled = true;
+      if (LIVE) {
+        try {
+          if (isNew) { const [nid] = await insertRows('activities', [{ ...actToDb(a), created_by: me || '' }]); a.id = nid; a.createdBy = me || ''; a.createdAt = stamp(); }
+          else { const { error } = await sb.from('activities').update({ ...actToDb(a), ...(moved ? { reminded_at: null } : {}) }).eq('id', a.id); if (error) throw error; }
+        } catch (err) { e.target.disabled = false; return failed(err); }
+      } else if (isNew) { a.id = ++uid; a.createdBy = me || ''; a.createdAt = stamp(); }
+      if (isNew) acts.push(a); else Object.assign(old, a);
+      if (deal) {
+        const whenTxt = fmtWhen(a.startsAt);
+        note(deal, isNew ? (meeting ? (planned ? `Meeting scheduled: ${a.title}, ${whenTxt}${a.location ? ' at ' + a.location : ''} (team: ${people.join(', ')}${a.inviteCustomer ? ', customer invited' : ''})` : `Meeting logged: ${a.title}, ${whenTxt}${a.details ? ' · ' + a.details : ''}`) : `Task: ${a.title}, due ${whenTxt}, assigned to ${people.join(', ')}`)
+          : `${meeting ? 'Meeting' : 'Task'} updated: ${a.title}, ${whenTxt}`);
+        saveDeal(deal);
+      }
+      let msg = isNew ? (meeting ? (planned ? 'Meeting scheduled' : 'Meeting logged') : 'Task created') : 'Saved';
+      if (planned && (isNew || meeting || peopleAdded)) { const r = await notify({ action: 'invite', id: a.id }); if (r && r.sent) msg += ` · ${r.sent} email${r.sent === 1 ? '' : 's'} sent`; }
+      toast(msg); render(); deal ? openDeal(deal.id) : closeDrawer();
+    };
+    if ($('#doneAct')) $('#doneAct').onclick = () => toggleActDone(old, true);
+    if ($('#cancelAct')) $('#cancelAct').onclick = async e => {
+      e.target.disabled = true;
+      old.status = 'cancelled';
+      if (LIVE) { const { error } = await sb.from('activities').update({ status: 'cancelled' }).eq('id', old.id); if (error) { old.status = 'scheduled'; e.target.disabled = false; return failed(error); } }
+      if (deal) { note(deal, `Meeting cancelled: ${old.title}, ${fmtWhen(old.startsAt)}`); saveDeal(deal); }
+      const r = await notify({ action: 'cancel', id: old.id });
+      toast(`Meeting cancelled${r && r.sent ? ` · ${r.sent} email${r.sent === 1 ? '' : 's'} sent` : ''}`); render(); deal ? openDeal(deal.id) : closeDrawer();
+    };
+  }
+  function toggleActDone(a, reopen) {
+    a.done = !a.done;
+    if (LIVE) sb.from('activities').update({ done: a.done }).eq('id', a.id).then(({ error }) => error && failed(error));
+    const deal = deals.find(x => x.id === a.dealId);
+    if (deal) { note(deal, `${a.done ? 'Task done' : 'Task reopened'}: ${a.title}`); saveDeal(deal); }
+    toast(a.done ? 'Task done' : 'Task reopened'); render();
+    if (deal && (reopen || !$('#drawer').hidden)) openDeal(deal.id);
+  }
+
+  // ---------- Calendar ----------
+  let calStart = null; // Monday of the week shown
+  function renderCalendar() {
+    if (!calStart) { calStart = new Date(today); calStart.setDate(calStart.getDate() - ((calStart.getDay() + 6) % 7)); }
+    const end = new Date(calStart); end.setDate(end.getDate() + 7);
+    const items = acts.filter(a => a.status !== 'cancelled' && mineAct(a) && new Date(a.startsAt) >= calStart && new Date(a.startsAt) < end && (deals.find(x => x.id === a.dealId) || {}).archived !== true);
+    const follow = deals.filter(x => OPEN.includes(x.stage) && matches(x) && x.followUp);
+    const late = acts.filter(a => a.status !== 'cancelled' && mineAct(a) && actLate(a) && new Date(a.startsAt) < calStart);
+    const days = [...Array(7)].map((_, i) => { const t = new Date(calStart); t.setDate(t.getDate() + i); return t; });
+    const ymd = t => `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    const label = `${calStart.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })} – ${new Date(end - DAY).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    const fuRow = x => { const c = contactOf(x); return `<li class="row" data-deal="${x.id}"><span class="act-icon fu" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8"/></svg></span><div class="row-main"><div class="row-title">${esc(x.nextAction || 'Follow up')}</div><div class="row-sub">Follow-up · ${esc(c.company || x.title)}${x.owner ? ' · ' + esc(x.owner) : ''}</div></div><div class="row-meta">${duePill(x)}</div></li>`; };
+    const body = days.map(t => {
+      const k = ymd(t);
+      const list = items.filter(a => localDay(a.startsAt) === k).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+      const fus = follow.filter(x => x.followUp === k);
+      const isToday = k === ymd(today);
+      return `<div class="section-label${isToday ? ' cal-today' : ''}">${t.toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' })}${isToday ? ' · Today' : ''}</div>${list.map(a => actRow(a, true, true)).join('')}${fus.map(fuRow).join('')}${!list.length && !fus.length ? '<li class="empty cal-empty">Nothing planned.</li>' : ''}`;
+    }).join('');
+    $('#view').innerHTML = `<div class="cal-tools"><button class="secondary" id="calPrev" aria-label="Previous week">‹</button><button class="secondary" id="calNow">This week</button><button class="secondary" id="calNext" aria-label="Next week">›</button><b class="cal-label">${label}</b></div>
+      ${late.length ? `<div class="panel cal-late"><div class="panel-head"><h2>Overdue tasks</h2><span class="count">${late.length}</span></div><ul class="list">${late.map(a => actRow(a, true)).join('')}</ul></div>` : ''}
+      <div class="panel"><ul class="list">${body}</ul></div>
+      <p class="import-note">Meetings, tasks and follow-up dates${who === 'all' ? ' for the whole team' : ` for ${esc(who)}`}. Add a task or meeting from a lead (open it in Pipeline).</p>`;
+    $('#calPrev').onclick = () => { calStart.setDate(calStart.getDate() - 7); render(); };
+    $('#calNext').onclick = () => { calStart.setDate(calStart.getDate() + 7); render(); };
+    $('#calNow').onclick = () => { calStart = null; render(); };
   }
 
   // ---------- Drawer: contact ----------
@@ -519,6 +687,10 @@
     if (e.target.closest('[data-close]')) return closeDrawer();
     const dr = e.target.closest('[data-draft]');
     if (dr) { e.stopPropagation(); return openDraft(+dr.dataset.draft); }
+    const ad = e.target.closest('[data-actdone]');
+    if (ad) { e.stopPropagation(); const a = acts.find(z => z.id === +ad.dataset.actdone); return a && toggleActDone(a); }
+    const ar = e.target.closest('[data-act]');
+    if (ar) { const a = acts.find(z => z.id === +ar.dataset.act); return a && openActivity(a.dealId, a.kind, a.id); }
     const done = e.target.closest('[data-done]');
     if (done) { e.stopPropagation(); return completeFollowUp(deals.find(x => x.id === +done.dataset.done)); }
     const deal = e.target.closest('[data-deal]');

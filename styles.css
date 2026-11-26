@@ -225,3 +225,28 @@ a.secondary.btn-link{color:var(--text)}
 .rep-track span{display:block;height:100%;background:var(--accent);border-radius:4px}
 .rep-n{flex:none;color:var(--muted);min-width:96px;text-align:right}
 @media (max-width:640px){.rep th,.rep td{padding:8px 8px}.rep-label{width:84px}.rep-n{min-width:0}.nav button{padding:6px 4px}}
+
+/* Tasks, meetings and calendar */
+.act-icon{width:22px;height:22px;flex:none;display:grid;place-items:center;color:var(--accent)}
+.act-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.act-icon.fu{color:var(--muted)}
+.check.checked{background:var(--green);border-color:var(--green);color:#fff;font-size:13px;font-weight:700}
+.act-row.is-done .row-title{text-decoration:line-through;color:var(--muted)}
+.act-list{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-top:6px}
+.act-list .row{padding:10px 12px}
+.team-pick{border:0;padding:0;margin:0;flex-direction:row;flex-wrap:wrap;gap:6px 16px}
+.team-pick legend{font-size:12px;font-weight:600;color:var(--muted);padding:0;margin-bottom:4px;width:100%}
+.team-pick label{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:500;color:var(--text)}
+.inline-check{display:flex;align-items:flex-start;gap:8px;font-size:14px;line-height:1.35}
+.inline-check input{margin-top:3px;flex:none}
+.inline-check input:disabled+*{opacity:.6}
+button.danger{color:var(--red);border-color:#f6cfc8}
+.cal-tools{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.cal-tools .secondary{min-width:38px}
+.cal-label{margin-left:6px}
+.cal-late{margin-bottom:12px}
+.section-label.cal-today{color:var(--accent);background:var(--accent-soft)}
+.cal-empty{padding:10px 16px;color:var(--muted);font-size:13px}
+.today-acts{margin-bottom:16px}
+.field input[type=checkbox]{width:auto;padding:0;box-shadow:none}
+.field .inline-check{font-size:14px;font-weight:500;color:var(--text)}
