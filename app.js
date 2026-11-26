@@ -436,7 +436,8 @@
   // ---------- Email from the CRM ----------
   // Sent by the notify function from the signed-in person's own forcevision.ca mailbox (a copy goes to their Sent folder),
   // then saved in the deal notes and the contact's notes so the whole team sees it. The demo sends nothing.
-  let mailboxOk = null;
+  let mailboxOk = null, mySig = '';
+  const sigText = () => mySig || `${me || ''}\nForceVision Inc.`;
   async function callFn(body) {
     const { data, error } = await sb.functions.invoke('notify', { body });
     if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch { /* keep message */ } throw new Error(m); }
@@ -455,8 +456,13 @@
         <div class="field full"><label for="m-to">To</label><input id="m-to" value="${esc(c.email)}"></div>
         <div class="field full"><label for="m-cc">Cc (optional)</label><input id="m-cc" placeholder="Separate addresses with commas"></div>
         <div class="field full"><label for="m-subject">Subject</label><input id="m-subject"></div>
-        <div class="field full"><label for="m-body">Message</label><textarea id="m-body" style="min-height:200px">${esc(`${firstName(c) ? `Hi ${firstName(c)},` : 'Hello,'}\n\n\n\n${me || ''}\nForceVision Inc.`)}</textarea></div>
-        <div class="actions"><button class="primary" id="mSend">Send email</button><a class="secondary btn-link" id="mApp" href="#">Use my email app instead (not tracked)</a></div>
+        <div class="field full"><label for="m-body">Message</label><textarea id="m-body" style="min-height:200px">${esc(`${firstName(c) ? `Hi ${firstName(c)},` : 'Hello,'}\n\n\n\n${sigText()}`)}</textarea></div>
+        <div class="actions"><button class="primary" id="mSend">Send email</button><a class="secondary btn-link" id="mApp" href="#">Use my email app instead (not tracked)</a><button class="secondary" id="mSigBtn">My signature</button></div>
+        <div id="sigBox" class="log-call" hidden>
+          <div class="field full"><label for="sig-text">My signature</label><textarea id="sig-text" style="min-height:120px" placeholder="Name&#10;Title&#10;Phone&#10;forcevision.ca">${esc(sigText())}</textarea></div>
+          <p class="import-note">Added to the end of every email you send from the CRM. Only you can change yours.</p>
+          <div class="actions"><button class="primary" id="sigSave">Save signature</button></div>
+        </div>
       </div>
     </div>`;
   function wireConnect(after) {
@@ -504,6 +510,15 @@
       box.scrollIntoView({ block: 'nearest' }); focus();
     });
     wireConnect(() => $('#m-subject').focus());
+    $('#mSigBtn').onclick = () => { $('#sigBox').hidden = !$('#sigBox').hidden; if (!$('#sigBox').hidden) $('#sig-text').focus(); };
+    $('#sigSave').onclick = async e => {
+      const old = sigText(), sig = $('#sig-text').value.replace(/\s+$/, '');
+      if (LIVE) { e.target.disabled = true; const { error } = await sb.rpc('crm_set_signature', { sig }); e.target.disabled = false; if (error) { toast('Signature not saved. Try again.'); return; } }
+      mySig = sig; const b = $('#m-body').value.replace(/\s+$/, '');
+      if (b.endsWith(old)) $('#m-body').value = b.slice(0, b.length - old.length) + sigText();
+      else if (!b.endsWith(sigText())) $('#m-body').value = `${b}\n\n${sigText()}`;
+      $('#sigBox').hidden = true; toast('Signature saved');
+    };
     $('#mApp').onclick = e => { e.currentTarget.href = mailHref($('#m-to').value, $('#m-subject').value, $('#m-body').value); };
     $('#mSend').onclick = async e => {
       const n = await sendEmail(e.target, x, c, { to: $('#m-to').value, cc: $('#m-cc').value, subject: $('#m-subject').value.trim(), text: $('#m-body').value });
@@ -793,10 +808,10 @@
   const gateMsg = (m, ok) => { const el = $('#gateMsg'); el.textContent = m; el.hidden = !m; el.className = ok ? 'gate-ok' : 'import-error'; };
   async function startLive(session) {
     const email = (session.user.email || '').toLowerCase();
-    const [m, co] = await Promise.all([sb.from('members').select('company_id,email,name,is_owner'), sb.from('companies').select('id,name').order('id')]);
+    const [m, co] = await Promise.all([sb.from('members').select('company_id,email,name,is_owner,signature'), sb.from('companies').select('id,name').order('id')]);
     const mine = !m.error && !co.error ? m.data.filter(r => r.email.toLowerCase() === email) : [];
     if (!mine.length) { await sb.auth.signOut(); $('#gate').hidden = false; gateMsg('This email is not on any company team list. Ask Zoltan to add you.'); return; }
-    members = m.data; myEmail = email;
+    members = m.data; myEmail = email; mySig = mine[0].signature || '';
     myCompanies = co.data.filter(c => mine.some(r => r.company_id === c.id));
     members.forEach(t => { teamNames[t.email.toLowerCase()] = t.name; });
     await setCompany(myCompanies[0].id);
