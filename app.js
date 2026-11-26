@@ -37,6 +37,7 @@
   // Sample owners (prototype): who is responsible for each deal
   const OWNERS = { 11: 'Zoltan', 12: 'Zoltan', 15: 'Zoltan', 17: 'Zoltan', 13: 'Motasim', 14: 'Motasim', 20: 'Motasim', 16: 'Maham', 18: 'Maham', 19: 'Maham' };
   deals.forEach(x => x.owner = OWNERS[x.id] || TEAM[0]);
+  deals.forEach(x => { if (x.stage === 'Won') x.wonAt = d(-6) + 'T12:00:00'; });
 
   // ---------- Helpers ----------
   const $ = s => document.querySelector(s);
@@ -59,11 +60,12 @@
   // ---------- Team pilot: sign-in and saving (Supabase) ----------
   const SB_URL = 'https://hpwfkgoduruigsikqtre.supabase.co';
   const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhwd2ZrZ29kdXJ1aWdzaWtxdHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU1NzQwNjcsImV4cCI6MjExMTE1MDA2N30._Is4TD8na5wFMqfnlF92nGA_pH45J313pPkXtcSGW-o'; // public anon key; data is protected by sign-in and row-level security
+  const RESET_URL = 'https://forcevision.github.io/crm/'; // where the forgot-password email link opens
   let LIVE = false, sb = null, me = null, myEmail = '', teamNames = {};
   const mem = {}; // the preview blocks browser storage, so the sign-in lives in memory (sign in again after a reload); the team link keeps it
   const store = { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } };
-  const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
-  const dealToDb = x => ({ contact_id: x.contactId || null, title: x.title, owner: x.owner, site: x.site, needs: x.needs, value: x.value || 0, stage: x.stage, next_action: x.nextAction, follow_up: x.followUp || null, proposal: x.proposal, notes: x.notes, draft: x.draft || null, trello_id: x.trelloId || null, archived: !!x.archived, ...(companyId ? { company_id: companyId } : {}) });
+  const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, wonAt: r.won_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
+  const dealToDb = x => ({ contact_id: x.contactId || null, title: x.title, owner: x.owner, site: x.site, needs: x.needs, value: x.value || 0, stage: x.stage, next_action: x.nextAction, follow_up: x.followUp || null, proposal: x.proposal, notes: x.notes, draft: x.draft || null, trello_id: x.trelloId || null, archived: !!x.archived, won_at: x.stage === 'Won' ? (x.wonAt = x.wonAt || new Date().toISOString()) : (x.wonAt = null), ...(companyId ? { company_id: companyId } : {}) });
   const contactToDb = c => ({ company: c.company, name: c.name, title: c.title, email: c.email, phone: c.phone, address: c.address || '', notes: c.notes, trello_id: c.trelloId || null, ...(companyId ? { company_id: companyId } : {}) });
   async function loadAll() {
     const [c, x] = await Promise.all([sb.from('contacts').select('*').eq('company_id', companyId).order('company'), sb.from('deals').select('*').eq('company_id', companyId).order('id')]);
@@ -247,10 +249,42 @@
     $('#backDeal').onclick = () => openDeal(x.id);
   }
 
+  function renderReports() {
+    const live = deals.filter(x => !x.archived);
+    const open = live.filter(x => OPEN.includes(x.stage));
+    const won = live.filter(x => x.stage === 'Won');
+    const ym = d(0).slice(0, 7);
+    const wonMonth = won.filter(x => x.wonAt && x.wonAt.slice(0, 7) === ym);
+    const sum = a => a.reduce((t, x) => t + (x.value || 0), 0);
+    const overdue = x => x.followUp && daysFrom(x.followUp) < -3;
+    const quiet = x => x.updatedAt && (Date.now() - new Date(x.updatedAt)) / DAY > 14;
+    const stuck = open.filter(x => overdue(x) || quiet(x)).sort((a, b) => (a.followUp || '').localeCompare(b.followUp || ''));
+    const people = [...new Set([...TEAM, ...live.map(x => x.owner).filter(Boolean)])];
+    const max = Math.max(1, ...STAGES.map(st => live.filter(x => x.stage === st).length));
+    const month = new Date(today).toLocaleString('en-CA', { month: 'long' });
+    $('#view').innerHTML = `
+      <div class="kpis">
+        <div class="kpi"><div class="label">Won in ${month} (CAD)</div><div class="value num">${money(sum(wonMonth))}</div><div class="kpi-sub">${wonMonth.length} deal${wonMonth.length === 1 ? '' : 's'}</div></div>
+        <div class="kpi"><div class="label">Won all time (CAD)</div><div class="value num">${money(sum(won))}</div><div class="kpi-sub">${won.length} deal${won.length === 1 ? '' : 's'}</div></div>
+        <div class="kpi"><div class="label">Open pipeline (CAD)</div><div class="value num">${money(sum(open))}</div><div class="kpi-sub">${open.length} open deal${open.length === 1 ? '' : 's'}</div></div>
+        <div class="kpi ${stuck.length ? 'alert' : ''}"><div class="label">Stuck deals</div><div class="value num">${stuck.length}</div><div class="kpi-sub">overdue 3+ days or quiet 14+ days</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="panel"><div class="panel-head"><h2>By person</h2><span class="count">open · won</span></div>
+          <table class="rep"><thead><tr><th>Owner</th><th>Open</th><th>Open value</th><th>Won value</th><th>Overdue</th></tr></thead><tbody>
+          ${people.map(n => { const o = open.filter(x => x.owner === n), w = won.filter(x => x.owner === n); return `<tr><td>${esc(n)}</td><td class="num">${o.length}</td><td class="num">${money(sum(o))}</td><td class="num">${money(sum(w))}</td><td class="num">${o.filter(x => x.followUp && daysFrom(x.followUp) < 0).length}</td></tr>`; }).join('')}
+          </tbody></table></div>
+        <div class="panel"><div class="panel-head"><h2>By stage</h2><span class="count">${live.length} deals</span></div>
+          <ul class="list">${STAGES.map(st => { const a = live.filter(x => x.stage === st); return `<li class="rep-bar"><span class="rep-label">${esc(st)}</span><span class="rep-track"><span style="width:${Math.round(a.length / max * 100)}%"></span></span><span class="num rep-n">${a.length} · ${money(sum(a))}</span></li>`; }).join('')}</ul></div>
+      </div>
+      <div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Stuck deals</h2><span class="count">${stuck.length}</span></div>
+        <ul class="list">${stuck.map(x => { const c = contactOf(x); return `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(c.company || x.title)}</div><div class="row-sub">${esc(x.title)} · ${esc(x.owner || '')}${quiet(x) ? ` · no update in ${Math.floor((Date.now() - new Date(x.updatedAt)) / DAY)} days` : ''}</div></div><div class="row-meta">${duePill(x)}</div></li>`; }).join('') || '<li class="empty">Nothing stuck. Every open deal has a recent update and no follow-up is more than 3 days late.</li>'}</ul></div>`;
+  }
+
   function render() {
     document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-    $('#viewTitle').textContent = { today: 'Today', pipeline: 'Pipeline', contacts: 'Contacts', assistant: 'Sales Assistant' }[view];
-    ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant })[view]();
+    $('#viewTitle').textContent = { today: 'Today', pipeline: 'Pipeline', contacts: 'Contacts', assistant: 'Sales Assistant', reports: 'Reports' }[view];
+    ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant, reports: renderReports })[view]();
   }
 
   // ---------- Drawer: deal ----------
@@ -470,7 +504,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
 
   // ---------- Sign-in screen, account links, refresh ----------
-  const gateMsg = m => { const el = $('#gateMsg'); el.textContent = m; el.hidden = !m; };
+  const gateMsg = (m, ok) => { const el = $('#gateMsg'); el.textContent = m; el.hidden = !m; el.className = ok ? 'gate-ok' : 'import-error'; };
   async function startLive(session) {
     const email = (session.user.email || '').toLowerCase();
     const [m, co] = await Promise.all([sb.from('members').select('company_id,email,name,is_owner'), sb.from('companies').select('id,name').order('id')]);
@@ -502,8 +536,8 @@
     $('#bannerText').textContent = `Team pilot · signed in as ${me}${myCompanies.length > 1 ? ` · ${CO}` : ''} · changes are saved for the team`;
     render();
   }
-  function openPassword() {
-    openDrawer('Change password', `<form id="pwForm" class="fields">
+  function openPassword(title) {
+    openDrawer(typeof title === 'string' ? title : 'Change password', `<form id="pwForm" class="fields">
       <div class="field full"><label for="pw1">New password (at least 8 characters)</label><input id="pw1" type="password" autocomplete="new-password" minlength="8"></div>
       <div class="field full"><label for="pw2">Type it again</label><input id="pw2" type="password" autocomplete="new-password"></div></form>
       <p id="pwMsg" class="import-error" hidden></p>
@@ -528,6 +562,17 @@
     if (error) return gateMsg(/invalid/i.test(error.message) ? 'Wrong email or password.' : error.message);
     try { await startLive(data.session); } catch (err) { console.error(err); gateMsg('Signed in, but the data did not load. Reload and try again.'); }
   };
+  // Forgot password: Supabase emails a reset link that opens the team link, which then asks for a new password.
+  $('#gateForgot').onclick = async () => {
+    const email = $('#g-email').value.trim();
+    if (!email) { gateMsg('Type your email above, then click Forgot password again.'); return $('#g-email').focus(); }
+    if (!sb) return gateMsg('Sign-in is not available right now. Check your internet connection and reload.');
+    const btn = $('#gateForgot'); btn.disabled = true;
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: RESET_URL });
+    btn.disabled = false;
+    if (error) return gateMsg(/rate|seconds/i.test(error.message) ? 'A reset email was just sent. Wait a minute and try again.' : error.message);
+    gateMsg(`If ${email} is on the team, a reset link is on its way. Check your inbox and junk folder, open the link, then choose a new password. Nothing after 5 minutes? Ask Zoltan for a new one.`, true);
+  };
   $('#gateDemo').onclick = () => { $('#gate').hidden = true; render(); };
   const refresh = () => { if (LIVE && $('#drawer').hidden && document.visibilityState === 'visible') loadAll().then(render).catch(() => {}); };
   document.addEventListener('visibilitychange', refresh);
@@ -538,9 +583,12 @@
       if (window.supabase) {
         // On the team link (GitHub Pages) the browser keeps the sign-in until Sign out; in the preview it lives in memory only.
         const keep = /\.github\.io$/.test(location.hostname);
-        sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { ...(keep ? {} : { storage: store }), persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+        const recovery = /type=recovery/.test(location.hash);
+        sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { ...(keep ? {} : { storage: store }), persistSession: true, autoRefreshToken: true, detectSessionInUrl: recovery } });
         const { data } = await sb.auth.getSession();
-        if (data.session) return await startLive(data.session);
+        if (recovery) history.replaceState(null, '', location.pathname + location.search);
+        if (data.session) { await startLive(data.session); if (recovery) openPassword('Choose a new password'); return; }
+        if (recovery) gateMsg('That reset link has expired or was already used. Click Forgot password to get a new one.');
       }
     } catch (err) { console.error(err); }
     $('#gate').hidden = false;
