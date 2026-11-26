@@ -20,6 +20,7 @@
     { id: 7, company: 'Elmwood Fabrication (sample)', name: 'Sophie Laurent', title: 'GM', email: 'sophie@elmwoodfab.example', phone: '(555) 010-2007', notes: '' },
     { id: 8, company: 'Crescent Food Processing (sample)', name: 'Raj Mehta', title: 'Plant Manager', email: 'raj@crescentfood.example', phone: '(555) 010-2008', notes: '' },
   ];
+  contacts.forEach(c => { c.log = c.notes ? [{ at: d(-14), text: c.notes }] : []; });
   let deals = [
     { id: 11, contactId: 1, title: 'Warehouse perimeter cameras', site: '100 Example Rd, Sample City', needs: '24 exterior cameras, loading-dock coverage, 30-day retention', value: 38000, stage: 'Proposal sent', nextAction: 'Follow up on proposal', followUp: d(-3), proposal: 'https://example.com/proposal-northgate', notes: [{ at: d(-10), text: 'Site visit done. Concern: dock theft at night.' }, { at: d(-6), text: 'Proposal emailed.' }] },
     { id: 12, contactId: 2, title: 'Plant-wide NVR upgrade', site: '200 Sample Ave, Sample City', needs: 'Replace 3 legacy DVRs, 48 cameras, central NVR', value: 62000, stage: 'Negotiation', nextAction: 'Send revised pricing option', followUp: d(0), proposal: 'https://example.com/proposal-lakeview', notes: [{ at: d(-4), text: 'Asked for a phased option.' }],
@@ -46,6 +47,10 @@
   const contactOf = deal => contacts.find(c => c.id === deal.contactId) || {};
   const daysFrom = iso => iso ? Math.round((new Date(iso + 'T00:00:00') - today) / DAY) : null;
   const fmtDate = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) : '—';
+  // Date and time for notes and changes. Older notes saved with a date only still show just the date.
+  const fmtWhen = iso => { if (!iso) return '—'; if (iso.length <= 10) return fmtDate(iso); const t = new Date(iso); return t.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', ...(t.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}) }) + ', ' + t.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }); };
+  const localDay = iso => { if (!iso || iso.length <= 10) return iso; const t = new Date(iso); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
+  const stamp = () => new Date().toISOString();
   function duePill(deal) {
     if (!OPEN.includes(deal.stage) || !deal.followUp) return '';
     const n = daysFrom(deal.followUp);
@@ -64,31 +69,31 @@
   let LIVE = false, sb = null, me = null, myEmail = '', teamNames = {};
   const mem = {}; // the preview blocks browser storage, so the sign-in lives in memory (sign in again after a reload); the team link keeps it
   const store = { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } };
-  const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, wonAt: r.won_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
+  const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], createdAt: r.created_at || '', draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, wonAt: r.won_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
   const dealToDb = x => ({ contact_id: x.contactId || null, title: x.title, owner: x.owner, site: x.site, needs: x.needs, value: x.value || 0, stage: x.stage, next_action: x.nextAction, follow_up: x.followUp || null, proposal: x.proposal, notes: x.notes, draft: x.draft || null, trello_id: x.trelloId || null, archived: !!x.archived, won_at: x.stage === 'Won' ? (x.wonAt = x.wonAt || new Date().toISOString()) : (x.wonAt = null), ...(companyId ? { company_id: companyId } : {}) });
-  const contactToDb = c => ({ company: c.company, name: c.name, title: c.title, email: c.email, phone: c.phone, address: c.address || '', notes: c.notes, trello_id: c.trelloId || null, ...(companyId ? { company_id: companyId } : {}) });
+  const contactToDb = c => ({ company: c.company, name: c.name, title: c.title, email: c.email, phone: c.phone, address: c.address || '', notes: c.notes || '', log: c.log || [], trello_id: c.trelloId || null, ...(companyId ? { company_id: companyId } : {}) });
   async function loadAll() {
     const [c, x] = await Promise.all([sb.from('contacts').select('*').eq('company_id', companyId).order('company'), sb.from('deals').select('*').eq('company_id', companyId).order('id')]);
     if (c.error || x.error) throw (c.error || x.error);
-    contacts = c.data.map(r => ({ id: r.id, company: r.company, name: r.name || '', title: r.title || '', email: r.email || '', phone: r.phone || '', address: r.address || '', notes: r.notes || '', trelloId: r.trello_id || undefined }));
+    contacts = c.data.map(r => ({ id: r.id, company: r.company, name: r.name || '', title: r.title || '', email: r.email || '', phone: r.phone || '', address: r.address || '', notes: r.notes || '', log: r.log || [], createdAt: r.created_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '', trelloId: r.trello_id || undefined }));
     deals = x.data.map(dealFromDb);
   }
   function failed(err) { console.error(err); toast('Not saved. Check your connection and try again.'); loadAll().then(render).catch(() => {}); }
   function saveDeal(x) { if (!LIVE) return; x.updatedBy = myEmail; x.updatedAt = new Date().toISOString(); sb.from('deals').update(dealToDb(x)).eq('id', x.id).then(({ error }) => error && failed(error)); }
-  function saveContact(c) { if (!LIVE) return; sb.from('contacts').update(contactToDb(c)).eq('id', c.id).then(({ error }) => error && failed(error)); }
+  function saveContact(c) { if (!LIVE) return; c.updatedBy = myEmail; c.updatedAt = stamp(); sb.from('contacts').update(contactToDb(c)).eq('id', c.id).then(({ error }) => error && failed(error)); }
   async function insertRows(table, rows) { const { data, error } = await sb.from(table).insert(rows).select('id'); if (error) throw error; return data.map(r => r.id); }
 
   let toastTimer;
   function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2200); }
 
-  const note = (x, text, at) => x.notes.push(me ? { at: at || d(0), text, by: me } : { at: at || d(0), text });
+  const note = (x, text, at, list = 'notes') => x[list].push(me ? { at: at || stamp(), text, by: me } : { at: at || stamp(), text });
   const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`; const n = Math.round(h / 24); return `${n} day${n === 1 ? '' : 's'} ago`; };
   const telHref = ph => 'tel:' + String(ph || '').replace(/[^\d+]/g, '');
   const mailHref = (to, subject, body) => `mailto:${encodeURIComponent(to || '').replace(/%40/g, '@')}?subject=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
   const reachButtons = c => (c.phone ? `<a class="secondary btn-link" data-call href="${esc(telHref(c.phone))}">Call</a>` : '') + (c.email ? `<a class="secondary btn-link" href="${esc(mailHref(c.email))}">Email</a>` : '');
 
   let view = 'today', query = '', who = 'all', showArchived = false;
-  const ownerChip = x => x.owner ? `<span class="owner" title="Owner: ${esc(x.owner)}">${esc(x.owner)}</span>` : '';
+  const ownerChip = x => x.owner ? `<span class="owner" title="Assigned to ${esc(x.owner)}">${esc(x.owner)}</span>` : '';
   const matches = deal => {
     if (deal.archived) return false;
     return matchesAny(deal);
@@ -181,7 +186,7 @@
     if (x.stage === 'Proposal sent') {
       pts += 20;
       const sent = x.notes.filter(z => /proposal/i.test(z.text)).map(z => z.at).sort().pop();
-      const age = sent ? -daysFrom(sent) : null;
+      const age = sent ? -daysFrom(localDay(sent)) : null;
       why.push(age != null ? `proposal out ${age} days` : 'proposal waiting on reply');
     }
     pts += Math.min(x.value / 2000, 30);
@@ -271,7 +276,7 @@
       </div>
       <div class="grid-2">
         <div class="panel"><div class="panel-head"><h2>By person</h2><span class="count">open · won</span></div>
-          <table class="rep"><thead><tr><th>Owner</th><th>Open</th><th>Open value</th><th>Won value</th><th>Overdue</th></tr></thead><tbody>
+          <table class="rep"><thead><tr><th>Assigned to</th><th>Open</th><th>Open value</th><th>Won value</th><th>Overdue</th></tr></thead><tbody>
           ${people.map(n => { const o = open.filter(x => x.owner === n), w = won.filter(x => x.owner === n); return `<tr><td>${esc(n)}</td><td class="num">${o.length}</td><td class="num">${money(sum(o))}</td><td class="num">${money(sum(w))}</td><td class="num">${o.filter(x => x.followUp && daysFrom(x.followUp) < 0).length}</td></tr>`; }).join('')}
           </tbody></table></div>
         <div class="panel"><div class="panel-head"><h2>By stage</h2><span class="count">${live.length} deals</span></div>
@@ -287,6 +292,18 @@
     ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant, reports: renderReports })[view]();
   }
 
+  const nameOf = email => teamNames[(email || '').toLowerCase()] || email;
+  const stampLine = r => (r.createdAt || r.updatedBy) ? `<p class="draft-meta">${r.createdAt ? `Created ${fmtWhen(r.createdAt)}` : ''}${r.createdAt && r.updatedBy ? ' · ' : ''}${r.updatedBy ? `Last updated by ${esc(nameOf(r.updatedBy))}, ${fmtWhen(r.updatedAt)} (${ago(r.updatedAt)})` : ''}</p>` : '';
+  const noteList = list => `<ul class="notes">${list.map((n, i) => ({ ...n, i })).sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.i - a.i).map(n => `<li><div class="when">${fmtWhen(n.at)}${n.by ? ` · ${esc(n.by)}` : ''}</div>${esc(n.text)}</li>`).join('') || '<li class="when">No notes yet.</li>'}</ul>`;
+  // Every change to these fields is written to the activity notes with the time and who made it.
+  function logChanges(x, v) {
+    const money0 = n => money(+n || 0);
+    if (v.stage !== x.stage) note(x, `Stage: ${x.stage} → ${v.stage}`);
+    if (v.owner !== x.owner) note(x, `Assigned to ${v.owner}${x.owner ? ` (was ${x.owner})` : ''}`);
+    if ((v.followUp || '') !== (x.followUp || '')) note(x, `Follow-up date: ${v.followUp ? fmtDate(v.followUp) : 'none'}${x.followUp ? ` (was ${fmtDate(x.followUp)})` : ''}`);
+    if ((+v.value || 0) !== (+x.value || 0)) note(x, `Value: ${money0(v.value)} (was ${money0(x.value)})`);
+    if ((v.nextAction || '') !== (x.nextAction || '')) note(x, `Next action: ${v.nextAction || 'none'}`);
+  }
   // ---------- Drawer: deal ----------
   function openDrawer(title, html) { $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html; $('#drawer').hidden = false; }
   function closeDrawer() { $('#drawer').hidden = true; }
@@ -299,13 +316,13 @@
     openDrawer(isNew ? 'New deal' : c.company, `
       ${!isNew && x.archived ? '<p class="arch-note">This deal is archived. It is hidden from Today, Pipeline and the Sales Assistant.</p>' : ''}
       ${isNew ? '' : `<div class="stage-bar">${STAGES.map((s, i) => `<button data-stage="${s}" class="${s === x.stage ? 'current' : i < idx && idx < 5 ? 'done' : ''} ${s === 'Won' ? 'won' : s === 'Lost' ? 'lost' : ''}">${s}</button>`).join('')}</div>`}
-      ${!isNew && x.updatedBy ? `<p class="draft-meta">Last updated by ${esc(teamNames[x.updatedBy.toLowerCase()] || x.updatedBy)} · ${ago(x.updatedAt)}</p>` : ''}
+      ${isNew ? '' : stampLine(x)}
       <form id="dealForm" class="fields">
         <div class="field full"><label for="f-title">Deal name</label><input id="f-title" name="title" required value="${esc(x.title)}"></div>
         <div class="field full"><label for="f-contact">Customer</label><select id="f-contact" name="contactId">${contacts.map(k => `<option value="${k.id}" ${k.id === x.contactId ? 'selected' : ''}>${esc(k.company)} — ${esc(k.name)}</option>`).join('')}</select></div>
         <div class="field full"><label for="f-site">Site address</label><input id="f-site" name="site" value="${esc(x.site)}"></div>
         <div class="field full"><label for="f-needs">Security requirements</label><textarea id="f-needs" name="needs">${esc(x.needs)}</textarea></div>
-        <div class="field"><label for="f-owner">Owner</label><select id="f-owner" name="owner">${TEAM.map(t => `<option ${t === x.owner ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label for="f-owner">Assigned to</label><select id="f-owner" name="owner">${TEAM.map(t => `<option ${t === x.owner ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
         <div class="field"><label for="f-value">Estimated value (CAD)</label><input id="f-value" name="value" type="number" min="0" step="100" value="${x.value}"></div>
         <div class="field"><label for="f-stage">Stage</label><select id="f-stage" name="stage">${STAGES.map(s => `<option ${s === x.stage ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
         <div class="field"><label for="f-next">Next action</label><input id="f-next" name="nextAction" value="${esc(x.nextAction)}"></div>
@@ -323,7 +340,7 @@
           <div class="actions"><button class="primary" id="saveCall">Save call note</button></div>
         </div>
         <h3>Activity notes</h3>
-        <ul class="notes">${x.notes.slice().reverse().map(n => `<li><div class="when">${fmtDate(n.at)}${n.by ? ` · ${esc(n.by)}` : ''}</div>${esc(n.text)}</li>`).join('') || '<li class="when">No notes yet.</li>'}</ul>
+        ${noteList(x.notes)}
         <div class="note-add"><input id="noteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="addNote">Add</button></div>`}
     `);
     const read = () => { const f = new FormData($('#dealForm')); return { title: f.get('title').trim(), owner: f.get('owner'), contactId: +f.get('contactId') || null, site: f.get('site'), needs: f.get('needs'), value: +f.get('value') || 0, stage: f.get('stage'), nextAction: f.get('nextAction'), followUp: f.get('followUp'), proposal: f.get('proposal') }; };
@@ -331,21 +348,21 @@
       const v = read();
       if (!v.title) { $('#f-title').focus(); toast('Add a deal name'); return; }
       if (isNew) {
-        const nd = { notes: [], ...v };
+        const nd = { notes: [], ...v, createdAt: stamp() }; note(nd, `Deal created, assigned to ${v.owner}`);
         if (LIVE) { e.target.disabled = true; try { [nd.id] = await insertRows('deals', [dealToDb(nd)]); } catch (err) { e.target.disabled = false; return failed(err); } } else nd.id = ++uid;
         deals.push(nd); toast('Deal created');
-      } else { Object.assign(x, v); saveDeal(x); toast('Saved'); }
+      } else { logChanges(x, v); Object.assign(x, v); saveDeal(x); toast('Saved'); }
       closeDrawer(); render();
     };
     if (!isNew) {
-      document.querySelectorAll('.stage-bar button').forEach(b => b.onclick = () => { x.stage = b.dataset.stage; saveDeal(x); toast(`Moved to ${x.stage}`); render(); openDeal(x.id); });
+      document.querySelectorAll('.stage-bar button').forEach(b => b.onclick = () => { if (b.dataset.stage === x.stage) return; note(x, `Stage: ${x.stage} → ${b.dataset.stage}`); x.stage = b.dataset.stage; saveDeal(x); toast(`Moved to ${x.stage}`); render(); openDeal(x.id); });
       $('#doneDeal').onclick = () => completeFollowUp(x, true);
       const add = () => { const t = $('#noteText').value.trim(); if (!t) return; note(x, t); saveDeal(x); openDeal(x.id); };
       const showLog = () => { $('#logCallBox').hidden = false; $('#callNote').focus(); };
       $('#logCallBtn').onclick = showLog;
       const callLink = document.querySelector('#drawerBody [data-call]');
       if (callLink) callLink.addEventListener('click', () => setTimeout(showLog, 300));
-      $('#saveCall').onclick = () => { const t = $('#callNote').value.trim(); note(x, `Call${c.name ? ` with ${c.name}` : ''}${t ? `: ${t}` : ''}`); if ($('#callFollow').value) x.followUp = $('#callFollow').value; saveDeal(x); toast('Call logged'); render(); openDeal(x.id); };
+      $('#saveCall').onclick = () => { const t = $('#callNote').value.trim(); note(x, `Call${c.name ? ` with ${c.name}` : ''}${t ? `: ${t}` : ''}`); if ($('#callFollow').value && $('#callFollow').value !== x.followUp) { note(x, `Follow-up date: ${fmtDate($('#callFollow').value)}`); x.followUp = $('#callFollow').value; } saveDeal(x); toast('Call logged'); render(); openDeal(x.id); };
       $('#archDeal').onclick = () => { x.archived = !x.archived; note(x, x.archived ? 'Archived' : 'Restored from archive'); saveDeal(x); toast(x.archived ? 'Archived. Pipeline › Show archived to restore it.' : 'Restored'); closeDrawer(); render(); };
       $('#addNote').onclick = add;
       $('#noteText').onkeydown = e => { if (e.key === 'Enter') add(); };
@@ -365,9 +382,11 @@
   // ---------- Drawer: contact ----------
   function openContact(id) {
     const isNew = id == null;
-    const c = isNew ? { company: '', name: '', title: '', email: '', phone: '', address: '', notes: '' } : contacts.find(k => k.id === id);
+    const c = isNew ? { company: '', name: '', title: '', email: '', phone: '', address: '', notes: '', log: [] } : contacts.find(k => k.id === id);
+    c.log = c.log || [];
     const related = isNew ? [] : deals.filter(x => x.contactId === c.id);
     openDrawer(isNew ? 'New contact' : c.company, `
+      ${isNew ? '' : stampLine(c)}
       <form id="contactForm" class="fields">
         <div class="field full"><label for="c-company">Company</label><input id="c-company" name="company" required value="${esc(c.company)}"></div>
         <div class="field"><label for="c-name">Decision-maker</label><input id="c-name" name="name" value="${esc(c.name)}"></div>
@@ -375,22 +394,28 @@
         <div class="field"><label for="c-email">Email</label><input id="c-email" name="email" type="email" value="${esc(c.email)}"></div>
         <div class="field"><label for="c-phone">Phone</label><input id="c-phone" name="phone" value="${esc(c.phone)}"></div>
         <div class="field full"><label for="c-address">Address</label><input id="c-address" name="address" value="${esc(c.address)}"></div>
-        <div class="field full"><label for="c-notes">Notes</label><textarea id="c-notes" name="notes">${esc(c.notes)}</textarea></div>
+        ${isNew ? '<div class="field full"><label for="c-first">First note (optional)</label><textarea id="c-first" name="first"></textarea></div>' : ''}
       </form>
       <div class="actions"><button class="primary" id="saveContact">${isNew ? 'Create contact' : 'Save changes'}</button></div>
-      ${isNew ? '' : `${reachButtons(c) ? `<div class="actions reach">${reachButtons(c)}</div>` : ''}<h3>Deals</h3><ul class="list">${related.map(x => `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(x.title)}</div><div class="row-sub num">${money(x.value)}</div></div><div class="row-meta">${x.archived ? '<span class="pill">Archived</span>' : stagePill(x.stage)}</div></li>`).join('') || '<li class="empty">No deals yet.</li>'}</ul>`}
+      ${isNew ? '' : `${reachButtons(c) ? `<div class="actions reach">${reachButtons(c)}</div>` : ''}<h3>Notes</h3>${noteList(c.log)}<div class="note-add"><input id="cNoteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="cAddNote">Add</button></div><h3>Deals</h3><ul class="list">${related.map(x => `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(x.title)}</div><div class="row-sub num">${money(x.value)}</div></div><div class="row-meta">${x.archived ? '<span class="pill">Archived</span>' : stagePill(x.stage)}</div></li>`).join('') || '<li class="empty">No deals yet.</li>'}</ul>`}
     `);
     $('#saveContact').onclick = async e => {
       const f = new FormData($('#contactForm'));
-      const v = Object.fromEntries(['company', 'name', 'title', 'email', 'phone', 'address', 'notes'].map(k => [k, String(f.get(k)).trim()]));
+      const v = Object.fromEntries(['company', 'name', 'title', 'email', 'phone', 'address'].map(k => [k, String(f.get(k)).trim()]));
       if (!v.company) { $('#c-company').focus(); toast('Add a company name'); return; }
       if (isNew) {
-        const nc = { ...v };
+        const nc = { ...v, notes: '', log: [], createdAt: stamp() }; note(nc, 'Contact created', null, 'log');
+        const first = String(f.get('first') || '').trim(); if (first) note(nc, first, null, 'log');
         if (LIVE) { e.target.disabled = true; try { [nc.id] = await insertRows('contacts', [contactToDb(nc)]); } catch (err) { e.target.disabled = false; return failed(err); } } else nc.id = ++uid;
         contacts.push(nc); toast('Contact created');
       } else { Object.assign(c, v); saveContact(c); toast('Saved'); }
       closeDrawer(); render();
     };
+    if (!isNew) {
+      const addC = () => { const t = $('#cNoteText').value.trim(); if (!t) return; note(c, t, null, 'log'); saveContact(c); openContact(c.id); };
+      $('#cAddNote').onclick = addC;
+      $('#cNoteText').onkeydown = e => { if (e.key === 'Enter') addC(); };
+    }
   }
 
   // ---------- CSV export ----------
@@ -401,8 +426,8 @@
     a.download = name; document.body.appendChild(a); a.click(); a.remove();
     toast(`Exported ${name}`);
   }
-  $('#exportOpps').onclick = () => download(`forcevision-deals${LIVE ? '' : '-sample'}.csv`, csv([['Deal', 'Owner', 'Company', 'Contact', 'Stage', 'Value CAD', 'Next action', 'Follow-up', 'Site', 'Requirements', 'Proposal'], ...deals.map(x => { const c = contactOf(x); return [x.title, x.owner, c.company, c.name, x.stage, x.value, x.nextAction, x.followUp, x.site, x.needs, x.proposal]; })]));
-  $('#exportContacts').onclick = () => download(`forcevision-contacts${LIVE ? '' : '-sample'}.csv`, csv([['Company', 'Name', 'Title', 'Email', 'Phone', 'Address', 'Notes'], ...contacts.map(c => [c.company, c.name, c.title, c.email, c.phone, c.address, c.notes])]));
+  $('#exportOpps').onclick = () => download(`forcevision-deals${LIVE ? '' : '-sample'}.csv`, csv([['Deal', 'Assigned to', 'Company', 'Contact', 'Stage', 'Value CAD', 'Next action', 'Follow-up', 'Site', 'Requirements', 'Proposal'], ...deals.map(x => { const c = contactOf(x); return [x.title, x.owner, c.company, c.name, x.stage, x.value, x.nextAction, x.followUp, x.site, x.needs, x.proposal]; })]));
+  $('#exportContacts').onclick = () => download(`forcevision-contacts${LIVE ? '' : '-sample'}.csv`, csv([['Company', 'Name', 'Title', 'Email', 'Phone', 'Address', 'Notes'], ...contacts.map(c => [c.company, c.name, c.title, c.email, c.phone, c.address, (c.log && c.log.length ? c.log.map(n => `${fmtWhen(n.at)}${n.by ? ` ${n.by}` : ''}: ${n.text}`).join(' | ') : c.notes)])]));
 
   // ---------- Trello import (prototype: board JSON export, in memory, preview before saving) ----------
   const guessStage = name => {
@@ -453,17 +478,17 @@
       const checklists = board.checklists || [];
       const newContacts = [], newDeals = [];
       fresh.forEach(card => {
-        const contact = { id: ++uid, trelloId: card.id, company: card.name, name: '', title: '', email: '', phone: '', notes: 'Imported from Trello' };
+        const contact = { id: ++uid, trelloId: card.id, company: card.name, name: '', title: '', email: '', phone: '', notes: '', log: [{ at: stamp(), text: 'Imported from Trello' }] };
         newContacts.push(contact);
         const notes = [];
-        const at = (card.dateLastActivity || '').slice(0, 10) || d(0);
+        const at = card.dateLastActivity || stamp();
         if (card.desc) notes.push({ at, text: `From Trello: ${card.desc}` });
         if (card.labels && card.labels.length) notes.push({ at, text: `Trello labels: ${card.labels.map(l => l.name || l.color).join(', ')}` });
-        comments.filter(a => a.data.card.id === card.id).reverse().forEach(a => notes.push({ at: (a.date || '').slice(0, 10) || at, text: `Trello comment${a.memberCreator ? ` (${a.memberCreator.fullName})` : ''}: ${a.data.text}` }));
+        comments.filter(a => a.data.card.id === card.id).reverse().forEach(a => notes.push({ at: a.date || at, text: `Trello comment${a.memberCreator ? ` (${a.memberCreator.fullName})` : ''}: ${a.data.text}` }));
         checklists.filter(k => k.idCard === card.id).forEach(k => notes.push({ at, text: `Trello checklist "${k.name}": ${(k.checkItems || []).map(i => `${i.state === 'complete' ? '[done]' : '[ ]'} ${i.name}`).join('; ')}` }));
         const files = (card.attachments || []).filter(a => a.url);
         if (files.length) notes.push({ at, text: `Trello attachments: ${files.map(a => `${a.name || 'file'} (${a.url})`).join(', ')}` });
-        notes.push({ at: d(0), text: `Imported from Trello list "${(lists.find(l => l.id === card.idList) || {}).name}"` });
+        notes.push({ at: stamp(), text: `Imported from Trello list "${(lists.find(l => l.id === card.idList) || {}).name}"` });
         const cardOwner = (card.idMembers || []).map(id => ownerOf[id]).find(Boolean) || owner;
         newDeals.push({ id: ++uid, trelloId: card.id, owner: cardOwner, contactId: contact.id, title: card.name, site: '', needs: '', value: 0, stage: stageOf[card.idList] || 'New lead', nextAction: card.due ? 'Follow up (Trello due date)' : 'Review imported lead and set next step', followUp: card.due ? card.due.slice(0, 10) : d(0), proposal: '', notes });
       });
@@ -487,7 +512,7 @@
   $('#search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
   $('#newDeal').onclick = () => openDeal(null);
   $('#importTrello').onclick = openImport;
-  const fillWho = () => { $('#who').innerHTML = `<option value="all">Everyone</option>${TEAM.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}`; $('#who').value = who; };
+  const fillWho = () => { $('#who').innerHTML = `<option value="all">Everyone</option>${me && TEAM.includes(me) ? `<option value="${esc(me)}">My leads (${esc(me)})</option>` : ''}${TEAM.filter(t => t !== me).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}`; $('#who').value = who; };
   fillWho();
   $('#who').onchange = e => { who = e.target.value; render(); };
   document.addEventListener('click', e => {
