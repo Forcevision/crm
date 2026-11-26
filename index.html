@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForceVision CRM — Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%231f6feb%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="gate" class="gate">
+  <form id="gateForm" class="gate-card" autocomplete="on">
+    <div class="gate-brand"><span class="brand-mark" aria-hidden="true"></span><span>ForceVision <b>CRM</b></span></div>
+    <h1>Sign in</h1>
+    <p class="gate-sub">Team pilot. Your deals and contacts are saved for the whole team.</p>
+    <div class="field full"><label for="g-email">Email</label><input id="g-email" type="email" autocomplete="username" required></div>
+    <div class="field full"><label for="g-pass">Password</label><input id="g-pass" type="password" autocomplete="current-password" required></div>
+    <p id="gateMsg" class="import-error" hidden></p>
+    <button class="primary gate-btn" id="gateSignIn" type="submit">Sign in</button>
+    <button class="secondary gate-btn" id="gateDemo" type="button">Open demo with sample data</button>
+    <p class="gate-foot">Forgot your password? Ask Zoltan for a new one.</p>
+  </form>
+</div>
+<div class="banner" role="note"><span id="bannerText">Prototype · fictional sample data · changes reset on reload</span><span id="bannerLinks"></span></div>
+<div class="shell">
+  <aside class="sidebar" aria-label="Main navigation">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>ForceVision <b>CRM</b></span></div>
+    <nav class="nav">
+      <button data-view="today" class="active"><svg viewBox="0 0 24 24"><path d="M4 5h16v15H4zM4 9h16M9 3v4M15 3v4"/></svg><span>Today</span></button>
+      <button data-view="pipeline"><svg viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z"/></svg><span>Pipeline</span></button>
+      <button data-view="contacts"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><span>Contacts</span></button>
+      <button data-view="assistant"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Sales Assistant</span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <button class="ghost" id="importTrello">Import from Trello</button>
+      <button class="ghost" id="exportOpps">Export deals CSV</button>
+      <button class="ghost" id="exportContacts">Export contacts CSV</button>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <h1 id="viewTitle">Today</h1>
+      <div class="topbar-actions">
+        <label class="who" id="coWrap" hidden><span>Company</span><select id="co" aria-label="Company"></select></label>
+        <label class="who"><span>Deals for</span><select id="who" aria-label="Show deals for"></select></label>
+        <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="search" type="search" placeholder="Search companies, people, sites" aria-label="Search"></label>
+        <button class="primary" id="newDeal">+ New deal</button>
+      </div>
+    </header>
+    <section id="view" class="view" aria-live="polite"></section>
+  </main>
+</div>
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-backdrop" data-close></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <div class="drawer-head"><h2 id="drawerTitle"></h2><button class="icon" data-close aria-label="Close">✕</button></div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.2/dist/umd/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
