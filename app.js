@@ -100,7 +100,7 @@
   const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`; const n = Math.round(h / 24); return `${n} day${n === 1 ? '' : 's'} ago`; };
   const telHref = ph => 'tel:' + String(ph || '').replace(/[^\d+]/g, '');
   const mailHref = (to, subject, body) => `mailto:${encodeURIComponent(to || '').replace(/%40/g, '@')}?subject=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
-  const reachButtons = c => (c.phone ? `<a class="secondary btn-link" data-call href="${esc(telHref(c.phone))}">Call</a>` : '') + (c.email ? `<a class="secondary btn-link" href="${esc(mailHref(c.email))}">Email</a>` : '');
+  const reachButtons = c => (c.phone ? `<a class="secondary btn-link" data-call href="${esc(telHref(c.phone))}">Call</a>` : '') + (c.email ? `<button class="secondary" data-compose>Email</button>` : '');
 
   let view = 'today', query = '', who = 'all', showArchived = false;
   const ownerChip = x => x.owner ? `<span class="owner" title="Assigned to ${esc(x.owner)}">${esc(x.owner)}</span>` : '';
@@ -248,13 +248,14 @@
   function openDraft(id) {
     const x = deals.find(z => z.id === id); const c = contactOf(x); const dr = draftFor(x);
     openDrawer(`Draft · ${c.company}`, `
-      <p class="draft-meta">${dr.saved ? 'Saved Sales Assistant draft for this deal.' : 'Template draft.'} For review. Edit it, copy it into your email, then log it here once you send it yourself.</p>
+      <p class="draft-meta">${dr.saved ? 'Saved Sales Assistant draft for this deal.' : 'Template draft.'} For review. Edit it, then press Send from CRM (it goes from your own address and is saved on the deal). Or open it in your email app and log it here once you send it.</p>
+      ${connectBox()}
       <div class="fields">
         <div class="field full"><label>To</label><div class="static">${esc(c.name)} &lt;${esc(dr.to)}&gt;</div></div>
         <div class="field full"><label for="dr-subject">Subject</label><input id="dr-subject" value="${esc(dr.subject)}"></div>
         <div class="field full"><label for="dr-body">Message</label><textarea id="dr-body" style="min-height:340px">${esc(dr.text)}</textarea></div>
       </div>
-      <div class="actions"><a class="primary btn-link" id="mailDraft" href="${esc(mailHref(dr.to, dr.subject, dr.text))}">Open in email</a><button class="secondary" id="copyDraft">Copy draft</button><button class="secondary" id="logSent">I sent it — log it</button><button class="secondary" id="backDeal">Open deal</button></div>`);
+      <div class="actions"><button class="primary" id="sendDraft">Send from CRM</button><a class="secondary btn-link" id="mailDraft" href="${esc(mailHref(dr.to, dr.subject, dr.text))}">Open in email</a><button class="secondary" id="copyDraft">Copy draft</button><button class="secondary" id="logSent">I sent it — log it</button><button class="secondary" id="backDeal">Open deal</button></div>`);
     const syncMail = () => { $('#mailDraft').href = mailHref(dr.to, $('#dr-subject').value, $('#dr-body').value); };
     $('#dr-subject').oninput = syncMail; $('#dr-body').oninput = syncMail;
     $('#mailDraft').onclick = () => { syncMail(); toast('Opening your email app. Press Send there, then log it here.'); };
@@ -265,6 +266,12 @@
     };
     $('#logSent').onclick = () => { note(x, `Follow-up email sent: "${$('#dr-subject').value}"`); x.followUp = d(3); x.nextAction = 'Check for reply'; delete x.draft; saveDeal(x); toast('Logged · reply check in 3 days'); closeDrawer(); render(); };
     $('#backDeal').onclick = () => openDeal(x.id);
+    wireConnect(() => $('#sendDraft').click());
+    $('#sendDraft').onclick = async e => {
+      const n = await sendEmail(e.target, x, c, { to: dr.to, cc: '', subject: $('#dr-subject').value.trim(), text: $('#dr-body').value });
+      if (!n) return;
+      x.followUp = d(3); x.nextAction = 'Check for reply'; delete x.draft; saveDeal(x); closeDrawer(); render();
+    };
   }
 
   function renderReports() {
@@ -307,7 +314,8 @@
 
   const nameOf = email => teamNames[(email || '').toLowerCase()] || email;
   const stampLine = r => (r.createdAt || r.updatedBy) ? `<p class="draft-meta">${r.createdAt ? `Created ${fmtWhen(r.createdAt)}` : ''}${r.createdAt && r.updatedBy ? ' · ' : ''}${r.updatedBy ? `Last updated by ${esc(nameOf(r.updatedBy))}, ${fmtWhen(r.updatedAt)} (${ago(r.updatedAt)})` : ''}</p>` : '';
-  const noteList = list => `<ul class="notes">${list.map((n, i) => ({ ...n, i })).sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.i - a.i).map(n => `<li><div class="when">${fmtWhen(n.at)}${n.by ? ` · ${esc(n.by)}` : ''}</div>${esc(n.text)}</li>`).join('') || '<li class="when">No notes yet.</li>'}</ul>`;
+  const emailNote = n => `<details><summary>${esc(n.text)}</summary><div class="email-meta">From ${esc(n.from || '')} · To ${esc((n.to || []).join(', '))}${n.cc && n.cc.length ? ` · Cc ${esc(n.cc.join(', '))}` : ''}</div><div class="email-body">${esc(n.body || '')}</div></details>`;
+  const noteList = list => `<ul class="notes">${list.map((n, i) => ({ ...n, i })).sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.i - a.i).map(n => `<li${n.kind === 'email' ? ' class="note-email"' : ''}><div class="when">${fmtWhen(n.at)}${n.by ? ` · ${esc(n.by)}` : ''}</div>${n.kind === 'email' ? emailNote(n) : esc(n.text)}</li>`).join('') || '<li class="when">No notes yet.</li>'}</ul>`;
   // Every change to these fields is written to the activity notes with the time and who made it.
   function logChanges(x, v) {
     const money0 = n => money(+n || 0);
@@ -353,6 +361,7 @@
           <label class="inline-check"><input type="checkbox" id="callTask"> Also make it a task for ${esc(x.owner || 'the assigned person')} (9:00 AM, with an email reminder)</label>
           <div class="actions"><button class="primary" id="saveCall">Save call note</button></div>
         </div>
+        ${composeBox(c)}
         <h3>Tasks and meetings</h3>
         <ul class="list act-list">${actsOf(x.id).map(a => actRow(a, false)).join('') || '<li class="empty">No tasks or meetings yet.</li>'}</ul>
         <div class="actions"><button class="secondary" id="addTask">+ Task</button><button class="secondary" id="addMeeting">+ Meeting</button><button class="secondary" id="logMeeting">Log past meeting</button></div>
@@ -393,6 +402,7 @@
         toast('Call logged'); render(); openDeal(x.id); };
       $('#archDeal').onclick = () => { x.archived = !x.archived; note(x, x.archived ? 'Archived' : 'Restored from archive'); saveDeal(x); toast(x.archived ? 'Archived. Pipeline › Show archived to restore it.' : 'Restored'); closeDrawer(); render(); };
       $('#addNote').onclick = add;
+      wireCompose(x, c, () => openDeal(x.id));
       $('#addTask').onclick = () => openActivity(x.id, 'task');
       $('#addMeeting').onclick = () => openActivity(x.id, 'meeting');
       $('#logMeeting').onclick = () => openActivity(x.id, 'meeting', null, true);
@@ -421,6 +431,84 @@
     if (!LIVE) return null;
     try { const { data, error } = await sb.functions.invoke('notify', { body }); if (error) throw error; return data; }
     catch (err) { console.error(err); toast('Saved, but the email did not go out. Try again later.'); return null; }
+  }
+
+  // ---------- Email from the CRM ----------
+  // Sent by the notify function from the signed-in person's own forcevision.ca mailbox (a copy goes to their Sent folder),
+  // then saved in the deal notes and the contact's notes so the whole team sees it. The demo sends nothing.
+  let mailboxOk = null;
+  async function callFn(body) {
+    const { data, error } = await sb.functions.invoke('notify', { body });
+    if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch { /* keep message */ } throw new Error(m); }
+    return data;
+  }
+  const connectBox = () => `<div id="mailConnect" class="log-call" hidden>
+      <p class="import-note">One-time setup: enter the password for <b>${esc(myEmail)}</b>, the same one you use for webmail. It is stored encrypted and only used to send your emails from the CRM.</p>
+      <div class="field full"><label for="mb-pass">Mailbox password</label><input id="mb-pass" type="password" autocomplete="current-password"></div>
+      <div class="actions"><button class="primary" id="mbConnect">Connect my mailbox</button></div>
+    </div>`;
+  const firstName = c => String(c.name || '').trim().split(/\s+/)[0];
+  const composeBox = c => !c.email ? '' : `<div id="mailBox" class="log-call" hidden>
+      ${connectBox()}
+      <div id="mailForm" class="mail-form">
+        <p class="draft-meta">${LIVE ? `Sends from ${esc(myEmail)}. It is saved in the notes so the team can see it.` : 'Demo: nothing is really sent. The email is only added to the notes.'}</p>
+        <div class="field full"><label for="m-to">To</label><input id="m-to" value="${esc(c.email)}"></div>
+        <div class="field full"><label for="m-cc">Cc (optional)</label><input id="m-cc" placeholder="Separate addresses with commas"></div>
+        <div class="field full"><label for="m-subject">Subject</label><input id="m-subject"></div>
+        <div class="field full"><label for="m-body">Message</label><textarea id="m-body" style="min-height:200px">${esc(`${firstName(c) ? `Hi ${firstName(c)},` : 'Hello,'}\n\n\n\n${me || ''}\nForceVision Inc.`)}</textarea></div>
+        <div class="actions"><button class="primary" id="mSend">Send email</button><a class="secondary btn-link" id="mApp" href="#">Use my email app instead (not tracked)</a></div>
+      </div>
+    </div>`;
+  function wireConnect(after) {
+    const btn = $('#mbConnect'); if (!btn) return;
+    btn.onclick = async () => {
+      const pw = $('#mb-pass').value; if (!pw) { $('#mb-pass').focus(); return; }
+      btn.disabled = true; btn.textContent = 'Checking…';
+      try { const r = await callFn({ action: 'mailbox', password: pw }); if (!r.connected) { toast(r.error || 'That password did not work'); return; }
+        mailboxOk = true; $('#mb-pass').value = ''; $('#mailConnect').hidden = true; toast('Mailbox connected'); after && after(); }
+      catch (err) { toast(err.message); }
+      finally { btn.disabled = false; btn.textContent = 'Connect my mailbox'; }
+    };
+    $('#mb-pass').onkeydown = e => { if (e.key === 'Enter') btn.click(); };
+  }
+  // Sends one email and adds the saved note locally. Returns the note, or null if it was not sent.
+  async function sendEmail(btn, x, c, m) {
+    if (!m.to.trim()) { toast('Add who it goes to'); return null; }
+    if (!m.subject) { toast('Add a subject'); return null; }
+    let n;
+    if (LIVE) {
+      if (mailboxOk === false) { $('#mailConnect').hidden = false; $('#mb-pass').focus(); toast('Connect your mailbox first'); return null; }
+      const label = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const r = await callFn({ action: 'email', deal_id: x ? x.id : null, contact_id: c && c.id ? c.id : null, ...m });
+        if (r.error === 'connect') { mailboxOk = false; $('#mailConnect').hidden = false; $('#mb-pass').focus(); toast(r.message); return null; }
+        mailboxOk = true; n = r.note;
+      } catch (err) { toast(`Not sent: ${err.message}`); return null; }
+      finally { btn.disabled = false; btn.textContent = label; }
+    } else {
+      const to = m.to.split(/[,;\s]+/).filter(Boolean), cc = m.cc.split(/[,;\s]+/).filter(Boolean);
+      n = { at: stamp(), kind: 'email', text: `Email sent to ${[...to, ...cc].join(', ')}: "${m.subject}"`, from: 'you (demo)', to, cc, subject: m.subject, body: m.text, ...(me ? { by: me } : {}) };
+    }
+    if (x) x.notes.push(n);
+    if (c && c.id) { c.log = c.log || []; c.log.push(n); }
+    toast(LIVE ? `Sent from ${myEmail} · saved in the notes` : 'Demo: added to the notes, not really sent');
+    return n;
+  }
+  function wireCompose(x, c, after) {
+    const box = $('#mailBox'); if (!box) return;
+    const focus = () => ($('#mailConnect').hidden ? $('#m-subject') : $('#mb-pass')).focus();
+    document.querySelectorAll('#drawerBody [data-compose]').forEach(b => b.onclick = async () => {
+      box.hidden = false;
+      if (LIVE && mailboxOk === null) { try { mailboxOk = !!(await callFn({ action: 'mailbox' })).connected; } catch { mailboxOk = null; } }
+      $('#mailConnect').hidden = !(LIVE && mailboxOk === false);
+      box.scrollIntoView({ block: 'nearest' }); focus();
+    });
+    wireConnect(() => $('#m-subject').focus());
+    $('#mApp').onclick = e => { e.currentTarget.href = mailHref($('#m-to').value, $('#m-subject').value, $('#m-body').value); };
+    $('#mSend').onclick = async e => {
+      const n = await sendEmail(e.target, x, c, { to: $('#m-to').value, cc: $('#m-cc').value, subject: $('#m-subject').value.trim(), text: $('#m-body').value });
+      if (n) { render(); after(); }
+    };
   }
   const isoLocal = iso => { const t = new Date(iso); return { date: localDay(iso), time: `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}` }; };
   const timeOnly = iso => new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
@@ -565,7 +653,7 @@
         ${isNew ? '<div class="field full"><label for="c-first">First note (optional)</label><textarea id="c-first" name="first"></textarea></div>' : ''}
       </form>
       <div class="actions"><button class="primary" id="saveContact">${isNew ? 'Create contact' : 'Save changes'}</button></div>
-      ${isNew ? '' : `${reachButtons(c) ? `<div class="actions reach">${reachButtons(c)}</div>` : ''}<h3>Notes</h3>${noteList(c.log)}<div class="note-add"><input id="cNoteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="cAddNote">Add</button></div><h3>Deals</h3><ul class="list">${related.map(x => `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(x.title)}</div><div class="row-sub num">${money(x.value)}</div></div><div class="row-meta">${x.archived ? '<span class="pill">Archived</span>' : stagePill(x.stage)}</div></li>`).join('') || '<li class="empty">No deals yet.</li>'}</ul>`}
+      ${isNew ? '' : `${reachButtons(c) ? `<div class="actions reach">${reachButtons(c)}</div>${composeBox(c)}` : ''}<h3>Notes</h3>${noteList(c.log)}<div class="note-add"><input id="cNoteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="cAddNote">Add</button></div><h3>Deals</h3><ul class="list">${related.map(x => `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(x.title)}</div><div class="row-sub num">${money(x.value)}</div></div><div class="row-meta">${x.archived ? '<span class="pill">Archived</span>' : stagePill(x.stage)}</div></li>`).join('') || '<li class="empty">No deals yet.</li>'}</ul>`}
     `);
     $('#saveContact').onclick = async e => {
       const f = new FormData($('#contactForm'));
@@ -581,6 +669,7 @@
     };
     if (!isNew) {
       const addC = () => { const t = $('#cNoteText').value.trim(); if (!t) return; note(c, t, null, 'log'); saveContact(c); openContact(c.id); };
+      if (c.email) wireCompose(null, c, () => openContact(c.id));
       $('#cAddNote').onclick = addC;
       $('#cNoteText').onkeydown = e => { if (e.key === 'Enter') addC(); };
     }

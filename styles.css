@@ -205,6 +205,7 @@ a.secondary.btn-link{color:var(--text)}
 .actions.reach{margin-top:8px}
 .log-call{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:12px;margin-top:10px;display:grid;gap:10px}
 .log-call .actions{margin-top:0}
+.log-call[hidden],.mail-form[hidden]{display:none}
 .board-tools{display:flex;justify-content:flex-end;margin-bottom:10px}
 .arch-toggle{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .col-archived{opacity:.8}
@@ -250,3 +251,10 @@ button.danger{color:var(--red);border-color:#f6cfc8}
 .today-acts{margin-bottom:16px}
 .field input[type=checkbox]{width:auto;padding:0;box-shadow:none}
 .field .inline-check{font-size:14px;font-weight:500;color:var(--text)}
+/* Emails sent from the CRM */
+.mail-form{display:grid;gap:10px}
+.mail-form .actions{margin-top:0}
+#mailBox #mailConnect{margin-top:0}
+.note-email summary{cursor:pointer}
+.note-email .email-meta{font-size:12px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
+.note-email .email-body{white-space:pre-wrap;margin-top:6px;font-size:14px;overflow-wrap:anywhere}
