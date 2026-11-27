@@ -141,12 +141,16 @@
     try {
       const { data, error } = await sb.functions.invoke('notify', { body: { action: 'phone' } });
       if (error || !data || !data.login) return;
+      // Some in-app browsers (for example inside other apps on iPhone) have no microphone access; keep the normal phone link there.
+      if (!window.RTCPeerConnection || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
       phoneInfo = data; phoneOn = true; render();
+      const giveUp = () => { if (phoneInfo && !phoneInfo.ready && !callCtx) { phoneOn = false; render(); } };
+      setTimeout(giveUp, 20000);
       if (!window.TelnyxWebRTC) await loadScript('https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.28.2/lib/bundle.js');
       phone = new window.TelnyxWebRTC.TelnyxRTC({ login: data.login, password: data.password });
       phone.remoteElement = 'callAudio';
-      phone.on('telnyx.ready', () => { phoneInfo.ready = true; });
-      phone.on('telnyx.error', err => { console.error('phone', err); });
+      phone.on('telnyx.ready', () => { phoneInfo.ready = true; if (!phoneOn) { phoneOn = true; render(); } });
+      phone.on('telnyx.error', err => { console.error('phone', err); giveUp(); });
       phone.on('telnyx.socket.close', () => { phoneInfo.ready = false; });
       phone.on('telnyx.notification', n => { if (n.type === 'callUpdate' && n.call) onCallUpdate(n.call); });
       phone.connect();
@@ -175,7 +179,7 @@
       if (call.direction === 'inbound') { const num = call.options && (call.options.remoteCallerNumber || call.options.callerNumber); const c = byPhone(num); callCtx = { dir: 'in', number: num || 'Unknown', name: c ? `${c.name || c.company}${c.name && c.company ? ', ' + c.company : ''}` : '', contactId: c ? c.id : null, dealId: null }; }
     }
     if (call.state === 'active' && !callStart) { callStart = Date.now(); clearInterval(callTick); callTick = setInterval(() => { const t = $('#callTime'); if (t) t.textContent = mmss(Date.now() - callStart); }, 1000); }
-    if (call.state === 'hangup' || call.state === 'destroy') return finishCall();
+    if (call.state === 'hangup' || call.state === 'destroy') { if (callCtx) callCtx.why = [call.sipCode, call.sipReason || call.cause].filter(Boolean).join(' '); return finishCall(); }
     showCall(call.state);
   }
   function finishCall() {
@@ -194,14 +198,18 @@
     // Reopen the record with the call note box ready, so the outcome is written down while it is fresh.
     if (x && talked) { openDeal(x.id); const box = $('#logCallBox'); if (box) { box.hidden = false; $('#callNote').focus(); } }
     else if (c && !$('#drawer').hidden) openContact(c.id);
-    toast(x || c ? 'Call saved to the notes' : 'Call ended');
+    const refused = ctx.dir === 'out' && !talked && /^(4\d\d|5\d\d|6\d\d)\b/.test(ctx.why || '') && !/^(408|480|486|487|603)\b/.test(ctx.why || '');
+    if (refused) toast(`The call did not go through (${ctx.why}). While the phone account is on trial it can only call your own cell.`);
+    else toast(x || c ? 'Call saved to the notes' : 'Call ended');
   }
   async function dial(number, ctx) {
     if (callCtx) { toast('Finish the current call first'); return; }
     const to = e164(number);
     if (!to || to.length < 12) { toast('This phone number does not look complete'); return; }
     callCtx = { dir: 'out', number: to, name: ctx.name || '', dealId: ctx.dealId || null, contactId: ctx.contactId || null };
-    if (!phone || !phoneInfo.ready) { callCtx = null; toast('The phone is still connecting. Try again in a few seconds.'); return; }
+    if (!phone || !phoneInfo.ready) { callCtx = null; toast('The phone is still connecting. Try again in a few seconds, or use Cell.'); return; }
+    try { const st = await navigator.mediaDevices.getUserMedia({ audio: true }); st.getTracks().forEach(t => t.stop()); }
+    catch (err) { callCtx = null; toast('The browser did not allow the microphone. Allow it for this site (Safari or Chrome), or use Cell.'); return; }
     showCall('new');
     try { curCall = phone.newCall({ destinationNumber: to, callerNumber: phoneInfo.callerId, callerName: phoneInfo.callerName || 'ForceVision', audio: true, video: false }); }
     catch (err) { console.error(err); callCtx = null; callBar(''); toast('Could not start the call. Allow the microphone and try again.'); }
