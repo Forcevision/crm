@@ -189,7 +189,7 @@
     callCtx = null; curCall = null; callStart = 0; muted = false;
     callBar(`<div class="call-main"><div class="call-who">${ctx.name ? esc(ctx.name) : `<span class="num">${esc(prettyNum(ctx.number))}</span>`}</div><div class="call-state">${talked ? `Call ended · ${durText(talked)}` : ctx.dir === 'in' ? 'Missed call' : 'No answer'}</div></div><div class="call-btns"><button class="secondary" id="callClose">Close</button></div>`);
     $('#callClose').onclick = () => callBar('');
-    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} (${prettyNum(ctx.number)}) · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : 'no answer'}`;
+    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} ${ctx.dir === 'in' ? 'on' : 'at'} ${prettyNum(ctx.number)} · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : 'no answer'}`;
     const x = ctx.dealId ? deals.find(z => z.id === ctx.dealId) : null;
     const c = ctx.contactId ? contacts.find(k => k.id === ctx.contactId) : null;
     if (x) { note(x, line); saveDeal(x); }
@@ -214,6 +214,17 @@
     try { curCall = phone.newCall({ destinationNumber: to, callerNumber: phoneInfo.callerId, callerName: phoneInfo.callerName || 'ForceVision', audio: true, video: false }); }
     catch (err) { console.error(err); callCtx = null; callBar(''); toast('Could not start the call. Allow the microphone and try again.'); }
   }
+  // Calls from the phone's own dialer (Call link without the CRM phone, or Cell): note the call right away.
+  document.addEventListener('click', e => {
+    const a = e.target.closest('#drawerBody a[data-call], #drawerBody a[data-cell]'); if (!a) return;
+    const ctxEl = $('#drawerBody'); const dealId = +ctxEl.dataset.ctxDeal || null, contactId = +ctxEl.dataset.ctxContact || null;
+    const x = dealId ? deals.find(z => z.id === dealId) : null;
+    const c = contacts.find(k => k.id === (x ? x.contactId : contactId));
+    const num = (a.getAttribute('href') || '').replace(/^tel:/, '');
+    const line = `Call${c && c.name ? ` to ${c.name}` : ''} at ${prettyNum(num)} · from ${a.dataset.cell !== undefined ? 'cell' : 'phone'}`;
+    if (x) { note(x, line); saveDeal(x); }
+    else if (c) { note(c, line, null, 'log'); saveContact(c); setTimeout(() => { if (!$('#drawer').hidden && +$('#drawerBody').dataset.ctxContact === c.id) openContact(c.id); }, 300); }
+  });
   document.addEventListener('click', e => {
     const b = e.target.closest('button[data-call]'); if (!b) return;
     const ctxEl = $('#drawerBody'); const dealId = +(ctxEl && ctxEl.dataset.ctxDeal) || null, contactId = +(ctxEl && ctxEl.dataset.ctxContact) || null;
