@@ -308,3 +308,19 @@ button.danger{color:var(--red);border-color:#f6cfc8}
 .inv-doc tbody tr{cursor:auto}
 .inv-doc tbody tr:hover{background:none}
 @media (max-width:640px){.inv-table td.inv-cust{max-width:110px;overflow:hidden;text-overflow:ellipsis}.inv-table th,.inv-table td{padding:10px 8px}}
+
+/* Phone call bar (Telnyx calls from the ForceVision number) */
+.call-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:60;width:min(560px,calc(100% - 24px));background:var(--navy);color:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(15,28,43,.35);padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.call-bar[hidden]{display:none}
+.call-main{flex:1 1 220px;min-width:0}
+.call-who{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call-state{font-size:13px;color:#c9d3de}
+.call-from{font-size:12px;color:#93a3b5}
+.call-btns{display:flex;gap:8px;flex-wrap:wrap}
+.call-bar .secondary{background:var(--navy-2);color:#fff;border-color:#33475c}
+.call-end{background:var(--red);color:#fff;border:0;border-radius:8px;padding:8px 14px;font-weight:600}
+.call-answer{background:var(--green)}
+.call-pad{flex-basis:100%;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.call-pad[hidden]{display:none}
+.call-pad button{padding:10px 0;font-size:16px}
+@media (max-width:600px){.call-bar{bottom:calc(64px + env(safe-area-inset-bottom));} .call-btns{width:100%} .call-btns button{flex:1}}

@@ -125,7 +125,93 @@
   const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`; const n = Math.round(h / 24); return `${n} day${n === 1 ? '' : 's'} ago`; };
   const telHref = ph => 'tel:' + String(ph || '').replace(/[^\d+]/g, '');
   const mailHref = (to, subject, body) => `mailto:${encodeURIComponent(to || '').replace(/%40/g, '@')}?subject=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
-  const reachButtons = c => (c.phone ? `<a class="secondary btn-link" data-call href="${esc(telHref(c.phone))}">Call</a>` : '') + (c.email ? `<button class="secondary" data-compose>Email</button>` : '');
+  const reachButtons = c => (c.phone ? (phoneOn ? `<button class="secondary" data-call data-num="${esc(c.phone)}">Call</button><a class="secondary btn-link" data-cell href="${esc(telHref(c.phone))}" title="Call from your own phone">Cell</a>` : `<a class="secondary btn-link" data-call href="${esc(telHref(c.phone))}">Call</a>`) : '') + (c.email ? `<button class="secondary" data-compose>Email</button>` : '');
+
+  // ---------- Phone (Telnyx, from the ForceVision 289 number, in the browser) ----------
+  // Only signed-in people the notify function allows get this; everyone else keeps the plain tel: link.
+  // The SIP login comes from the notify function (stored in Supabase Vault), never from this file.
+  let phoneOn = false, phone = null, phoneInfo = null, curCall = null, callCtx = null, callStart = 0, callTick = null, muted = false;
+  const e164 = n => { const dg = String(n || '').replace(/[^\d]/g, ''); return dg.length === 10 ? '+1' + dg : dg.length === 11 && dg[0] === '1' ? '+' + dg : dg ? '+' + dg : ''; };
+  const prettyNum = n => { const dg = String(n || '').replace(/[^\d]/g, '').replace(/^1(?=\d{10}$)/, ''); return dg.length === 10 ? `(${dg.slice(0, 3)}) ${dg.slice(3, 6)}-${dg.slice(6)}` : n; };
+  const byPhone = n => { const k = e164(n); return k ? contacts.find(c => c.phone && e164(c.phone) === k) : null; };
+  const mmss = ms => { const t = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+  const durText = ms => { const t = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(t / 60), sec = t % 60; return m ? `${m} min ${sec} s` : `${sec} s`; };
+  function loadScript(src) { return new Promise((ok, bad) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = () => bad(new Error('Could not load the phone')); document.head.appendChild(el); }); }
+  async function startPhone() {
+    try {
+      const { data, error } = await sb.functions.invoke('notify', { body: { action: 'phone' } });
+      if (error || !data || !data.login) return;
+      phoneInfo = data; phoneOn = true; render();
+      if (!window.TelnyxWebRTC) await loadScript('https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.28.2/lib/bundle.js');
+      phone = new window.TelnyxWebRTC.TelnyxRTC({ login: data.login, password: data.password });
+      phone.remoteElement = 'callAudio';
+      phone.on('telnyx.ready', () => { phoneInfo.ready = true; });
+      phone.on('telnyx.error', err => { console.error('phone', err); });
+      phone.on('telnyx.socket.close', () => { phoneInfo.ready = false; });
+      phone.on('telnyx.notification', n => { if (n.type === 'callUpdate' && n.call) onCallUpdate(n.call); });
+      phone.connect();
+    } catch (err) { console.error('phone', err); }
+  }
+  function callBar(html) { let b = $('#callBar'); if (!b) { b = document.createElement('div'); b.id = 'callBar'; b.className = 'call-bar'; b.setAttribute('role', 'region'); b.setAttribute('aria-label', 'Phone call'); document.body.appendChild(b); } b.innerHTML = html; b.hidden = !html; return b; }
+  function showCall(state) {
+    const who = callCtx.name ? `${esc(callCtx.name)} · <span class="num">${esc(prettyNum(callCtx.number))}</span>` : `<span class="num">${esc(prettyNum(callCtx.number))}</span>`;
+    const label = { new: 'Connecting…', trying: 'Connecting…', requesting: 'Connecting…', recovering: 'Reconnecting…', ringing: callCtx.dir === 'in' ? 'Incoming call' : 'Ringing…', early: 'Ringing…', active: 'Connected', held: 'On hold', hangup: 'Call ended', destroy: 'Call ended' }[state] || state;
+    const incoming = callCtx.dir === 'in' && state === 'ringing';
+    const live = !['hangup', 'destroy'].includes(state);
+    const b = callBar(`<div class="call-main"><div class="call-who">${callCtx.dir === 'in' ? 'From ' : ''}${who}</div><div class="call-state"><span id="callStatus">${label}</span>${state === 'active' ? ` · <span id="callTime" class="num">${mmss(Date.now() - callStart)}</span>` : ''}</div><div class="call-from">${callCtx.dir === 'in' ? 'To' : 'From'} ForceVision <span class="num">${esc(prettyNum(phoneInfo ? phoneInfo.callerId : '+12898128904'))}</span></div></div>
+      <div class="call-btns">${incoming ? '<button class="primary call-answer" id="callAnswer">Answer</button><button class="call-end" id="callEnd">Decline</button>' : live ? `<button class="secondary" id="callMute" aria-pressed="${muted}">${muted ? 'Unmute' : 'Mute'}</button><button class="secondary" id="callPadBtn" aria-expanded="false">Keypad</button><button class="call-end" id="callEnd">Hang up</button>` : '<button class="secondary" id="callClose">Close</button>'}</div>
+      <div class="call-pad" id="callPad" hidden>${['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(k => `<button class="secondary" data-dtmf="${k}">${k}</button>`).join('')}</div>`);
+    const end = $('#callEnd'); if (end) end.onclick = () => { if (curCall && curCall.hangup) curCall.hangup(); else finishCall(); };
+    const ans = $('#callAnswer'); if (ans) ans.onclick = () => { try { curCall.answer(); } catch (err) { console.error(err); toast('Could not answer. Allow the microphone and try again.'); } };
+    const mu = $('#callMute'); if (mu) mu.onclick = () => { muted = !muted; if (curCall && curCall.toggleAudioMute) curCall.toggleAudioMute(); showCall(state); };
+    const pb = $('#callPadBtn'); if (pb) pb.onclick = () => { const pad = $('#callPad'); pad.hidden = !pad.hidden; pb.setAttribute('aria-expanded', String(!pad.hidden)); };
+    b.querySelectorAll('[data-dtmf]').forEach(k => k.onclick = () => { if (curCall && curCall.dtmf) curCall.dtmf(k.dataset.dtmf); });
+    const cl = $('#callClose'); if (cl) cl.onclick = () => callBar('');
+  }
+  function onCallUpdate(call) {
+    if (!curCall || curCall.id !== call.id) {
+      if (curCall && !['hangup', 'destroy'].includes(curCall.state)) { if (call.state === 'ringing') call.hangup(); return; } // already on a call: decline the second one
+      curCall = call; muted = false;
+      if (call.direction === 'inbound') { const num = call.options && (call.options.remoteCallerNumber || call.options.callerNumber); const c = byPhone(num); callCtx = { dir: 'in', number: num || 'Unknown', name: c ? `${c.name || c.company}${c.name && c.company ? ', ' + c.company : ''}` : '', contactId: c ? c.id : null, dealId: null }; }
+    }
+    if (call.state === 'active' && !callStart) { callStart = Date.now(); clearInterval(callTick); callTick = setInterval(() => { const t = $('#callTime'); if (t) t.textContent = mmss(Date.now() - callStart); }, 1000); }
+    if (call.state === 'hangup' || call.state === 'destroy') return finishCall();
+    showCall(call.state);
+  }
+  function finishCall() {
+    if (!callCtx) return;
+    clearInterval(callTick);
+    const ctx = callCtx, talked = callStart ? Date.now() - callStart : 0;
+    callCtx = null; curCall = null; callStart = 0; muted = false;
+    callBar(`<div class="call-main"><div class="call-who">${ctx.name ? esc(ctx.name) : `<span class="num">${esc(prettyNum(ctx.number))}</span>`}</div><div class="call-state">${talked ? `Call ended · ${durText(talked)}` : ctx.dir === 'in' ? 'Missed call' : 'No answer'}</div></div><div class="call-btns"><button class="secondary" id="callClose">Close</button></div>`);
+    $('#callClose').onclick = () => callBar('');
+    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} (${prettyNum(ctx.number)}) · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : 'no answer'}`;
+    const x = ctx.dealId ? deals.find(z => z.id === ctx.dealId) : null;
+    const c = ctx.contactId ? contacts.find(k => k.id === ctx.contactId) : null;
+    if (x) { note(x, line); saveDeal(x); }
+    else if (c) { note(c, line, null, 'log'); saveContact(c); }
+    render();
+    // Reopen the record with the call note box ready, so the outcome is written down while it is fresh.
+    if (x && talked) { openDeal(x.id); const box = $('#logCallBox'); if (box) { box.hidden = false; $('#callNote').focus(); } }
+    else if (c && !$('#drawer').hidden) openContact(c.id);
+    toast(x || c ? 'Call saved to the notes' : 'Call ended');
+  }
+  async function dial(number, ctx) {
+    if (callCtx) { toast('Finish the current call first'); return; }
+    const to = e164(number);
+    if (!to || to.length < 12) { toast('This phone number does not look complete'); return; }
+    callCtx = { dir: 'out', number: to, name: ctx.name || '', dealId: ctx.dealId || null, contactId: ctx.contactId || null };
+    if (!phone || !phoneInfo.ready) { callCtx = null; toast('The phone is still connecting. Try again in a few seconds.'); return; }
+    showCall('new');
+    try { curCall = phone.newCall({ destinationNumber: to, callerNumber: phoneInfo.callerId, callerName: phoneInfo.callerName || 'ForceVision', audio: true, video: false }); }
+    catch (err) { console.error(err); callCtx = null; callBar(''); toast('Could not start the call. Allow the microphone and try again.'); }
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button[data-call]'); if (!b) return;
+    const ctxEl = $('#drawerBody'); const dealId = +(ctxEl && ctxEl.dataset.ctxDeal) || null, contactId = +(ctxEl && ctxEl.dataset.ctxContact) || null;
+    const c = contacts.find(k => k.id === contactId) || {};
+    dial(b.dataset.num, { name: c.name ? `${c.name}${c.company ? ', ' + c.company : ''}` : c.company || '', dealId, contactId });
+  });
 
   let view = 'today', query = '', who = 'all', showArchived = false;
   const ownerChip = x => x.owner ? `<span class="owner" title="Assigned to ${esc(x.owner)}">${esc(x.owner)}</span>` : '';
@@ -353,7 +439,7 @@
     if ((v.nextAction || '') !== (x.nextAction || '')) note(x, `Next action: ${v.nextAction || 'none'}`);
   }
   // ---------- Drawer: deal ----------
-  function openDrawer(title, html) { $('#drawerTitle').textContent = title; $('#drawerBody').innerHTML = html; $('#drawer').hidden = false; }
+  function openDrawer(title, html, ctx = {}) { $('#drawerTitle').textContent = title; const b = $('#drawerBody'); b.innerHTML = html; b.dataset.ctxDeal = ctx.deal || ''; b.dataset.ctxContact = ctx.contact || ''; $('#drawer').hidden = false; }
   function closeDrawer() { $('#drawer').hidden = true; }
 
   function openDeal(id) {
@@ -398,7 +484,7 @@
         <h3>Activity notes</h3>
         ${noteList(x.notes)}
         <div class="note-add"><input id="noteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="addNote">Add</button></div>`}
-    `);
+    `, isNew ? {} : { deal: x.id, contact: x.contactId });
     const read = () => { const f = new FormData($('#dealForm')); return { title: f.get('title').trim(), owner: f.get('owner'), contactId: +f.get('contactId') || null, site: f.get('site'), needs: f.get('needs'), value: +f.get('value') || 0, stage: f.get('stage'), nextAction: f.get('nextAction'), followUp: f.get('followUp'), proposal: f.get('proposal') }; };
     $('#saveDeal').onclick = async e => {
       const v = read();
@@ -421,7 +507,7 @@
       const add = () => { const t = $('#noteText').value.trim(); if (!t) return; note(x, t); saveDeal(x); openDeal(x.id); };
       const showLog = () => { $('#logCallBox').hidden = false; $('#callNote').focus(); };
       $('#logCallBtn').onclick = showLog;
-      const callLink = document.querySelector('#drawerBody [data-call]');
+      const callLink = document.querySelector('#drawerBody a[data-call], #drawerBody a[data-cell]');
       if (callLink) callLink.addEventListener('click', () => setTimeout(showLog, 300));
       $('#saveCall').onclick = async () => { const t = $('#callNote').value.trim(); note(x, `Call${c.name ? ` with ${c.name}` : ''}${t ? `: ${t}` : ''}`); if ($('#callFollow').value && $('#callFollow').value !== x.followUp) { note(x, `Follow-up date: ${fmtDate($('#callFollow').value)}`); x.followUp = $('#callFollow').value; } saveDeal(x);
         if ($('#callTask').checked && $('#callFollow').value) {
@@ -723,7 +809,7 @@
       </form>
       <div class="actions"><button class="primary" id="saveContact">${isNew ? 'Create contact' : 'Save changes'}</button></div>
       ${isNew ? '' : `${reachButtons(c) ? `<div class="actions reach">${reachButtons(c)}</div>${composeBox(c)}` : ''}<h3>Notes</h3>${noteList(c.log)}<div class="note-add"><input id="cNoteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="cAddNote">Add</button></div><h3>Deals</h3><ul class="list">${related.map(x => `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(x.title)}</div><div class="row-sub num">${money(x.value)}</div></div><div class="row-meta">${x.archived ? '<span class="pill">Archived</span>' : stagePill(x.stage)}</div></li>`).join('') || '<li class="empty">No deals yet.</li>'}</ul>`}
-    `);
+    `, isNew ? {} : { contact: c.id });
     $('#saveContact').onclick = async e => {
       const f = new FormData($('#contactForm'));
       const v = Object.fromEntries(['company', 'name', 'title', 'email', 'phone', 'address'].map(k => [k, String(f.get(k)).trim()]));
@@ -1107,6 +1193,7 @@
     $('#co').onchange = async e => { try { await setCompany(+e.target.value); } catch (err) { failed(err); } };
     $('#gate').hidden = true;
     render();
+    startPhone();
   }
   async function setCompany(id) {
     const prev = companyId; companyId = id;
