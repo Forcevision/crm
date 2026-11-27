@@ -324,3 +324,5 @@ button.danger{color:var(--red);border-color:#f6cfc8}
 .call-pad[hidden]{display:none}
 .call-pad button{padding:10px 0;font-size:16px}
 @media (max-width:600px){.call-bar{bottom:calc(64px + env(safe-area-inset-bottom));} .call-btns{width:100%} .call-btns button{flex:1}}
+/* iPhone Safari zooms into any field under 16px and stays zoomed; 16px on phones keeps the page fitting the screen. */
+@media (max-width:760px){input,select,textarea{font-size:16px}}
