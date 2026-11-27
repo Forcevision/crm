@@ -162,7 +162,7 @@
     const label = { new: 'Connecting…', trying: 'Connecting…', requesting: 'Connecting…', recovering: 'Reconnecting…', ringing: callCtx.dir === 'in' ? 'Incoming call' : 'Ringing…', early: 'Ringing…', active: 'Connected', held: 'On hold', hangup: 'Call ended', destroy: 'Call ended' }[state] || state;
     const incoming = callCtx.dir === 'in' && state === 'ringing';
     const live = !['hangup', 'destroy'].includes(state);
-    const b = callBar(`<div class="call-main"><div class="call-who">${callCtx.dir === 'in' ? 'From ' : ''}${who}</div><div class="call-state"><span id="callStatus">${label}</span>${state === 'active' ? ` · <span id="callTime" class="num">${mmss(Date.now() - callStart)}</span>` : ''}</div><div class="call-from">${callCtx.dir === 'in' ? 'To' : 'From'} ForceVision <span class="num">${esc(prettyNum(phoneInfo ? phoneInfo.callerId : '+12898128904'))}</span></div></div>
+    const b = callBar(`<div class="call-main"><div class="call-who">${callCtx.dir === 'in' ? 'From ' : ''}${who}</div><div class="call-state"><span id="callStatus">${label}</span>${state === 'active' ? ` · <span id="callTime" class="num">${mmss(Date.now() - callStart)}</span>` : ''}${rec && state === 'active' ? ' · <span class="rec-dot">Recording</span>' : ''}</div>${rec && state === 'active' ? '<div class="call-from">Let the customer know the call is recorded</div>' : ''}<div class="call-from">${callCtx.dir === 'in' ? 'To' : 'From'} ForceVision <span class="num">${esc(prettyNum(phoneInfo ? phoneInfo.callerId : '+12898128904'))}</span></div></div>
       <div class="call-btns">${incoming ? '<button class="primary call-answer" id="callAnswer">Answer</button><button class="call-end" id="callEnd">Decline</button>' : live ? `<button class="secondary" id="callMute" aria-pressed="${muted}">${muted ? 'Unmute' : 'Mute'}</button><button class="secondary" id="callPadBtn" aria-expanded="false">Keypad</button><button class="call-end" id="callEnd">Hang up</button>` : '<button class="secondary" id="callClose">Close</button>'}</div>
       <div class="call-pad" id="callPad" hidden>${['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(k => `<button class="secondary" data-dtmf="${k}">${k}</button>`).join('')}</div>`);
     const end = $('#callEnd'); if (end) end.onclick = () => { if (curCall && curCall.hangup) curCall.hangup(); else finishCall(); };
@@ -178,10 +178,48 @@
       curCall = call; muted = false;
       if (call.direction === 'inbound') { const num = call.options && (call.options.remoteCallerNumber || call.options.callerNumber); const c = byPhone(num); callCtx = { dir: 'in', number: num || 'Unknown', name: c ? `${c.name || c.company}${c.name && c.company ? ', ' + c.company : ''}` : '', contactId: c ? c.id : null, dealId: null }; }
     }
-    if (call.state === 'active' && !callStart) { callStart = Date.now(); clearInterval(callTick); callTick = setInterval(() => { const t = $('#callTime'); if (t) t.textContent = mmss(Date.now() - callStart); }, 1000); }
+    if (call.state === 'active' && !callStart) { startRec(call); callStart = Date.now(); clearInterval(callTick); callTick = setInterval(() => { const t = $('#callTime'); if (t) t.textContent = mmss(Date.now() - callStart); }, 1000); }
     if (call.state === 'hangup' || call.state === 'destroy') { if (callCtx) callCtx.why = [call.sipCode, call.sipReason || call.cause].filter(Boolean).join(' '); return finishCall(); }
     showCall(call.state);
   }
+  // Call recording (pilot): both sides are mixed in the browser and saved to the private call-recordings folder of this company.
+  let rec = null;
+  function startRec(call) {
+    if (rec || !LIVE || !companyId || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) return;
+    try {
+      const loc = call.localStream, rem = call.remoteStream || ($('#callAudio') && $('#callAudio').srcObject);
+      if (!loc && !rem) return;
+      const ac = new (window.AudioContext || window.webkitAudioContext)(), dest = ac.createMediaStreamDestination();
+      [loc, rem].forEach(st => { if (st && st.getAudioTracks().length) ac.createMediaStreamSource(st).connect(dest); });
+      const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+      const mr = new MediaRecorder(dest.stream, type ? { mimeType: type } : undefined), parts = [];
+      mr.ondataavailable = e => { if (e.data && e.data.size) parts.push(e.data); };
+      mr.start(1000);
+      rec = { mr, ac, parts, type: (mr.mimeType || type || 'audio/webm').split(';')[0] };
+    } catch (err) { console.error('recording', err); rec = null; }
+  }
+  function stopRec() {
+    const r = rec; rec = null; if (!r) return Promise.resolve(null);
+    return new Promise(ok => {
+      r.mr.onstop = async () => {
+        try { r.ac.close(); } catch (e) { /* already closed */ }
+        const blob = new Blob(r.parts, { type: r.type });
+        if (!blob.size) return ok(null);
+        const path = `${companyId}/${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}.${r.type === 'audio/mp4' ? 'm4a' : 'webm'}`;
+        const { error } = await sb.storage.from('call-recordings').upload(path, blob, { contentType: r.type });
+        if (error) { console.error('recording upload', error); toast('The call recording could not be saved'); return ok(null); }
+        ok(path);
+      };
+      try { r.mr.stop(); } catch (e) { ok(null); }
+    });
+  }
+  async function playRec(btn) {
+    btn.disabled = true;
+    const { data, error } = await sb.storage.from('call-recordings').createSignedUrl(btn.dataset.rec, 3600);
+    if (error || !data) { btn.disabled = false; toast('Could not open the recording'); return; }
+    const au = document.createElement('audio'); au.controls = true; au.src = data.signedUrl; au.className = 'rec-audio'; btn.replaceWith(au); au.play().catch(() => {});
+  }
+  document.addEventListener('click', e => { const b = e.target.closest('button[data-rec]'); if (b) playRec(b); });
   function finishCall() {
     if (!callCtx) return;
     clearInterval(callTick);
@@ -194,6 +232,8 @@
     const c = ctx.contactId ? contacts.find(k => k.id === ctx.contactId) : null;
     if (x) { note(x, line); saveDeal(x); }
     else if (c) { note(c, line, null, 'log'); saveContact(c); }
+    const saved = x ? x.notes[x.notes.length - 1] : c ? c.log[c.log.length - 1] : null;
+    stopRec().then(path => { if (!path || !saved) return; saved.rec = path; if (x) saveDeal(x); else saveContact(c); const body = $('#drawerBody'); if (body && !$('#drawer').hidden && (x ? +body.dataset.ctxDeal === x.id : +body.dataset.ctxContact === c.id) && !(x && $('#logCallBox') && !$('#logCallBox').hidden)) (x ? openDeal(x.id) : openContact(c.id)); });
     render();
     // Reopen the record with the call note box ready, so the outcome is written down while it is fresh.
     if (x && talked) { openDeal(x.id); const box = $('#logCallBox'); if (box) { box.hidden = false; $('#callNote').focus(); } }
@@ -447,7 +487,7 @@
   const nameOf = email => teamNames[(email || '').toLowerCase()] || email;
   const stampLine = r => (r.createdAt || r.updatedBy) ? `<p class="draft-meta">${r.createdAt ? `Created ${fmtWhen(r.createdAt)}` : ''}${r.createdAt && r.updatedBy ? ' · ' : ''}${r.updatedBy ? `Last updated by ${esc(nameOf(r.updatedBy))}, ${fmtWhen(r.updatedAt)} (${ago(r.updatedAt)})` : ''}</p>` : '';
   const emailNote = n => `<details><summary>${esc(n.text)}</summary><div class="email-meta">From ${esc(n.from || '')} · To ${esc((n.to || []).join(', '))}${n.cc && n.cc.length ? ` · Cc ${esc(n.cc.join(', '))}` : ''}</div><div class="email-body">${esc(n.body || '')}</div></details>`;
-  const noteList = list => `<ul class="notes">${list.map((n, i) => ({ ...n, i })).sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.i - a.i).map(n => `<li${n.kind === 'email' ? ' class="note-email"' : ''}><div class="when">${fmtWhen(n.at)}${n.by ? ` · ${esc(n.by)}` : ''}</div>${n.kind === 'email' ? emailNote(n) : esc(n.text)}</li>`).join('') || '<li class="when">No notes yet.</li>'}</ul>`;
+  const noteList = list => `<ul class="notes">${list.map((n, i) => ({ ...n, i })).sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.i - a.i).map(n => `<li${n.kind === 'email' ? ' class="note-email"' : ''}><div class="when">${fmtWhen(n.at)}${n.by ? ` · ${esc(n.by)}` : ''}</div>${n.kind === 'email' ? emailNote(n) : esc(n.text)}${n.rec && LIVE ? ` <button class="secondary rec-play" data-rec="${esc(n.rec)}">Play recording</button>` : ''}</li>`).join('') || '<li class="when">No notes yet.</li>'}</ul>`;
   // Every change to these fields is written to the activity notes with the time and who made it.
   function logChanges(x, v) {
     const money0 = n => money(+n || 0);

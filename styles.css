@@ -326,3 +326,7 @@ button.danger{color:var(--red);border-color:#f6cfc8}
 @media (max-width:600px){.call-bar{bottom:calc(64px + env(safe-area-inset-bottom));} .call-btns{width:100%} .call-btns button{flex:1}}
 /* iPhone Safari zooms into any field under 16px and stays zoomed; 16px on phones keeps the page fitting the screen. */
 @media (max-width:760px){input,select,textarea{font-size:16px}}
+.rec-dot{color:#ff8a80;font-weight:600}
+.rec-dot::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#e5484d;margin-right:5px;vertical-align:1px}
+.rec-play{display:block;margin-top:6px;padding:4px 10px;font-size:13px}
+.rec-audio{display:block;width:100%;max-width:320px;margin-top:6px;height:36px}
