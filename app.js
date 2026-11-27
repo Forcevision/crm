@@ -3,6 +3,8 @@
   const STAGES = ['New lead', 'Contacted', 'Site visit', 'Proposal sent', 'Negotiation', 'Won', 'Lost'];
   const OPEN = STAGES.slice(0, 5);
   const DAY = 86400000;
+  // Stage reminders: a deal with no update for this many days in its stage emails its owner (weekdays, 8 AM). Keep in step with STAGE_DAYS in supabase/functions/notify.
+  const STAGE_DAYS = { 'New lead': 2, 'Contacted': 4, 'Site visit': 3, 'Proposal sent': 3, 'Negotiation': 5 };
   let TEAM = ['Zoltan', 'Motasim', 'Maham'];
   let CO = 'ForceVision', companyId = null, myCompanies = [], members = []; // signed in: the company being viewed and its team
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -39,6 +41,8 @@
   const OWNERS = { 11: 'Zoltan', 12: 'Zoltan', 15: 'Zoltan', 17: 'Zoltan', 13: 'Motasim', 14: 'Motasim', 20: 'Motasim', 16: 'Maham', 18: 'Maham', 19: 'Maham' };
   deals.forEach(x => x.owner = OWNERS[x.id] || TEAM[0]);
   deals.forEach(x => { if (x.stage === 'Won') x.wonAt = d(-6) + 'T12:00:00'; });
+  const DEMO_AGE = { 11: 6, 12: 2, 13: 1, 14: 5, 15: 4, 16: 0, 19: 3, 20: 1 }; // sample: days since each deal last changed
+  deals.forEach(x => { x.stageSince = x.updatedAt = new Date(Date.now() - (DEMO_AGE[x.id] ?? 1) * DAY).toISOString(); });
   const at = (n, h, m = 0) => { const t = new Date(today); t.setDate(t.getDate() + n); t.setHours(h, m, 0, 0); return t.toISOString(); };
   let acts = [
     { id: 1, dealId: 12, kind: 'meeting', title: 'Site visit: Lakeview Steel', startsAt: at(1, 10), endsAt: at(1, 11, 30), location: '', details: 'Walk the yard and loading docks with the plant manager.', assignees: ['Zoltan', 'Motasim'], inviteCustomer: true, customerEmail: '', remind: 60, logged: false, done: false, status: 'scheduled', createdBy: 'Zoltan', createdAt: at(-1, 9) },
@@ -69,6 +73,15 @@
     const cls = stage === 'Won' ? 'green' : stage === 'Lost' ? 'red' : stage === 'Proposal sent' || stage === 'Negotiation' ? 'blue' : '';
     return `<span class="pill ${cls}">${esc(stage)}</span>`;
   }
+  // Days in the current stage and days with no update; a stage change resets both.
+  function stageAge(x) {
+    if (x._st !== undefined && x._st !== x.stage) x.stageSince = stamp();
+    x._st = x.stage;
+    const since = new Date(x.stageSince || x.updatedAt || x.createdAt || Date.now()).getTime();
+    const last = Math.max(since, new Date(x.updatedAt || 0).getTime());
+    return { inStage: Math.max(0, Math.floor((Date.now() - since) / DAY)), idle: Math.max(0, Math.floor((Date.now() - last) / DAY)), limit: STAGE_DAYS[x.stage] };
+  }
+  const needsNudge = x => { if (!STAGE_DAYS[x.stage]) return false; const a = stageAge(x); return a.idle >= a.limit; };
   // ---------- Team pilot: sign-in and saving (Supabase) ----------
   const SB_URL = 'https://hpwfkgoduruigsikqtre.supabase.co';
   const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhwd2ZrZ29kdXJ1aWdzaWtxdHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU1NzQwNjcsImV4cCI6MjExMTE1MDA2N30._Is4TD8na5wFMqfnlF92nGA_pH45J313pPkXtcSGW-o'; // public anon key; data is protected by sign-in and row-level security
@@ -76,7 +89,7 @@
   let LIVE = false, sb = null, me = null, myEmail = '', teamNames = {};
   const mem = {}; // the preview blocks browser storage, so the sign-in lives in memory (sign in again after a reload); the team link keeps it
   const store = { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } };
-  const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], createdAt: r.created_at || '', draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, wonAt: r.won_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
+  const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], createdAt: r.created_at || '', draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, wonAt: r.won_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '', stageSince: r.stage_since || r.updated_at || '' });
   const dealToDb = x => ({ contact_id: x.contactId || null, title: x.title, owner: x.owner, site: x.site, needs: x.needs, value: x.value || 0, stage: x.stage, next_action: x.nextAction, follow_up: x.followUp || null, proposal: x.proposal, notes: x.notes, draft: x.draft || null, trello_id: x.trelloId || null, archived: !!x.archived, won_at: x.stage === 'Won' ? (x.wonAt = x.wonAt || new Date().toISOString()) : (x.wonAt = null), ...(companyId ? { company_id: companyId } : {}) });
   const contactToDb = c => ({ company: c.company, name: c.name, title: c.title, email: c.email, phone: c.phone, address: c.address || '', notes: c.notes || '', log: c.log || [], trello_id: c.trelloId || null, ...(companyId ? { company_id: companyId } : {}) });
   async function loadAll() {
@@ -89,7 +102,7 @@
     acts = a.data.map(actFromDb);
   }
   function failed(err) { console.error(err); toast('Not saved. Check your connection and try again.'); loadAll().then(render).catch(() => {}); }
-  function saveDeal(x) { if (!LIVE) return Promise.resolve(); x.updatedBy = myEmail; x.updatedAt = new Date().toISOString(); return sb.from('deals').update(dealToDb(x)).eq('id', x.id).then(({ error }) => error && failed(error)); }
+  function saveDeal(x) { if (!LIVE) { x.updatedAt = stamp(); return Promise.resolve(); } x.updatedBy = myEmail; x.updatedAt = new Date().toISOString(); return sb.from('deals').update(dealToDb(x)).eq('id', x.id).then(({ error }) => error && failed(error)); }
   function saveContact(c) { if (!LIVE) return; c.updatedBy = myEmail; c.updatedAt = stamp(); sb.from('contacts').update(contactToDb(c)).eq('id', c.id).then(({ error }) => error && failed(error)); }
   async function insertRows(table, rows) { const { data, error } = await sb.from(table).insert(rows).select('id'); if (error) throw error; return data.map(r => r.id); }
 
@@ -135,6 +148,7 @@
     const group = (label, items) => items.length ? `<div class="section-label">${label} · ${items.length}</div>${items.map(taskRow).join('')}` : '';
     const soon = new Date(today.getTime() + 2 * DAY);
     const agenda = acts.filter(a => a.status !== 'cancelled' && !a.done && !a.logged && mineAct(a) && new Date(a.startsAt) < soon && !(deals.find(x => x.id === a.dealId) || {}).archived).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    const nudges = open.filter(needsNudge).map(x => [x, stageAge(x)]).sort((a, b) => (b[1].idle - b[1].limit) - (a[1].idle - a[1].limit));
     const tasks = group('Overdue', overdue) + group('Due today', due) + group('Next 7 days', upcoming);
 
     $('#view').innerHTML = `
@@ -145,6 +159,7 @@
         <div class="kpi"><div class="label">Won (CAD)</div><div class="value num">${money(won)}</div></div>
       </div>
       ${agenda.length ? `<div class="panel today-acts"><div class="panel-head"><h2>Tasks and meetings</h2><span class="count">${agenda.length}</span></div><ul class="list">${agenda.map(a => actRow(a, true)).join('')}</ul></div>` : ''}
+      ${nudges.length ? `<div class="panel today-acts stage-nudges"><div class="panel-head"><h2>Stage reminders</h2><span class="count">${nudges.length}</span></div><ul class="list">${nudges.map(([x, a]) => { const c = contactOf(x); return `<li class="row" data-deal="${x.id}"><div class="row-main"><div class="row-title">${esc(c.company || x.title)}</div><div class="row-sub">${esc(x.title)} · no update in ${a.idle} day${a.idle === 1 ? '' : 's'}${who === 'all' && x.owner ? ` · ${esc(x.owner)}` : ''}</div></div><div class="row-meta">${stagePill(x.stage)}</div></li>`; }).join('')}</ul></div>` : ''}
       <div class="grid-2">
         <div class="panel"><div class="panel-head"><h2>Who needs attention</h2><span class="count">${overdue.length + due.length + upcoming.length} tasks</span></div>
           <ul class="list">${tasks || '<li class="empty">No follow-ups. You are caught up.</li>'}</ul></div>
@@ -336,6 +351,7 @@
     const idx = STAGES.indexOf(x.stage);
     openDrawer(isNew ? 'New deal' : c.company, `
       ${!isNew && x.archived ? '<p class="arch-note">This deal is archived. It is hidden from Today, Pipeline and the Sales Assistant.</p>' : ''}
+      ${isNew ? '' : (() => { if (!STAGE_DAYS[x.stage] || x.archived) return ''; const a = stageAge(x); const late = a.idle >= a.limit; return `<p class="stage-age${late ? ' late' : ''}">In ${esc(x.stage)} for ${a.inStage} day${a.inStage === 1 ? '' : 's'} · ${late ? `no update in ${a.idle} day${a.idle === 1 ? '' : 's'}, ${esc(x.owner || 'the owner')} gets an email reminder` : `reminder after ${a.limit} days with no update`}</p>`; })()}
       ${isNew ? '' : `<div class="stage-bar">${STAGES.map((s, i) => `<button data-stage="${s}" class="${s === x.stage ? 'current' : i < idx && idx < 5 ? 'done' : ''} ${s === 'Won' ? 'won' : s === 'Lost' ? 'lost' : ''}">${s}</button>`).join('')}</div>`}
       ${isNew ? '' : stampLine(x)}
       <form id="dealForm" class="fields">

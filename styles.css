@@ -125,6 +125,8 @@ tbody tr:last-child td{border-bottom:0}
 .stage-bar{display:flex;gap:4px;margin:4px 0 14px;flex-wrap:wrap}
 .stage-bar button{flex:1;min-width:70px;font-size:11px;font-weight:600;padding:6px 4px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted)}
 .stage-bar button.done{background:var(--accent-soft);color:var(--accent);border-color:#c8dafc}
+.stage-age{font-size:12px;color:var(--muted);margin:0 0 6px}
+.stage-age.late{color:var(--amber);font-weight:600}
 .stage-bar button.current{background:var(--accent);color:#fff;border-color:var(--accent)}
 .stage-bar button.won.current{background:var(--green);border-color:var(--green)}
 .stage-bar button.lost.current{background:var(--red);border-color:var(--red)}
