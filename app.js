@@ -50,11 +50,19 @@
     { id: 3, dealId: 13, kind: 'task', title: 'Call back about NVR storage', startsAt: at(-1, 11), endsAt: null, location: '', details: '', assignees: ['Motasim'], inviteCustomer: false, customerEmail: '', remind: 30, logged: false, done: false, status: 'scheduled', createdBy: 'Maham', createdAt: at(-3, 9) },
   ];
   acts[0].location = (deals.find(x => x.id === 12) || {}).site || '';
+  // Invoices (sample): amounts only come from the deal value or what someone types.
+  const INV_DEFAULTS = { businessName: 'ForceVision Inc.', address: '2390 Prospect St., Burlington, ON L7R 2A8', phone: '(289) 288-3954', hstNumber: '', paymentInstructions: '', daysToPay: 30, nextNumber: 1 };
+  let invSettings = { ...INV_DEFAULTS, nextNumber: 2 };
+  let invoices = [
+    { id: 1, dealId: 17, contactId: 7, number: 'FV-0001', issueDate: d(-6), dueDate: d(24), status: 'Sent', items: [{ desc: 'Shop floor safety cameras', qty: 1, price: 14500 }], taxRate: 13, notes: '', sentAt: at(-6, 10), paidAt: null, createdAt: at(-6, 9), createdBy: 'Zoltan' },
+  ];
+  deals.find(x => x.id === 17).notes.push({ at: at(-6, 9), text: 'Invoice FV-0001 created, $16,385.00' }, { at: at(-6, 10), text: 'Invoice FV-0001 emailed to sophie@elmwoodfab.example' });
 
   // ---------- Helpers ----------
   const $ = s => document.querySelector(s);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = n => '$' + Math.round(n || 0).toLocaleString('en-CA');
+  const money2 = n => (n < 0 ? '-$' : '$') + Math.abs(n || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const contactOf = deal => contacts.find(c => c.id === deal.contactId) || {};
   const daysFrom = iso => iso ? Math.round((new Date(iso + 'T00:00:00') - today) / DAY) : null;
   const fmtDate = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) : '—';
@@ -100,6 +108,10 @@
     const a = await sb.from('activities').select('*').eq('company_id', companyId).order('starts_at');
     if (a.error) throw a.error;
     acts = a.data.map(actFromDb);
+    const [iv, st] = await Promise.all([sb.from('invoices').select('*').eq('company_id', companyId).order('id'), sb.from('invoice_settings').select('*').eq('company_id', companyId).maybeSingle()]);
+    if (iv.error || st.error) throw (iv.error || st.error);
+    invoices = iv.data.map(invFromDb);
+    invSettings = st.data ? settingsFromDb(st.data) : { ...INV_DEFAULTS };
   }
   function failed(err) { console.error(err); toast('Not saved. Check your connection and try again.'); loadAll().then(render).catch(() => {}); }
   function saveDeal(x) { if (!LIVE) { x.updatedAt = stamp(); return Promise.resolve(); } x.updatedBy = myEmail; x.updatedAt = new Date().toISOString(); return sb.from('deals').update(dealToDb(x)).eq('id', x.id).then(({ error }) => error && failed(error)); }
@@ -323,8 +335,8 @@
 
   function render() {
     document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-    $('#viewTitle').textContent = { today: 'Today', pipeline: 'Pipeline', contacts: 'Contacts', assistant: 'Sales Assistant', reports: 'Reports', calendar: 'Calendar' }[view];
-    ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant, reports: renderReports, calendar: renderCalendar })[view]();
+    $('#viewTitle').textContent = { today: 'Today', pipeline: 'Pipeline', contacts: 'Contacts', assistant: 'Sales Assistant', reports: 'Reports', calendar: 'Calendar', invoices: 'Invoices' }[view];
+    ({ today: renderToday, pipeline: renderPipeline, contacts: renderContacts, assistant: renderAssistant, reports: renderReports, calendar: renderCalendar, invoices: renderInvoices })[view]();
   }
 
   const nameOf = email => teamNames[(email || '').toLowerCase()] || email;
@@ -367,6 +379,7 @@
         <div class="field full"><label for="f-proposal">Proposal link</label><input id="f-proposal" name="proposal" type="url" placeholder="https://" value="${esc(x.proposal)}"></div>
       </form>
       <div class="actions"><button class="primary" id="saveDeal">${isNew ? 'Create deal' : 'Save changes'}</button>${isNew ? '' : '<button class="secondary" id="doneDeal">Follow-up done</button>' + (OPEN.includes(x.stage) ? `<button class="secondary" data-draft="${x.id}">Draft follow-up</button>` : '') + `<button class="secondary" id="archDeal">${x.archived ? 'Restore' : 'Archive'}</button>`}</div>
+      ${isNew || x.stage !== 'Won' ? '' : invoiceSection(x, true)}
       ${isNew ? '' : `
         <h3>Contact</h3>
         <div class="static">${esc(c.name)} · ${esc(c.title)}<br><span class="num">${esc(c.phone)}</span> · ${esc(c.email)}</div>
@@ -381,6 +394,7 @@
         <h3>Tasks and meetings</h3>
         <ul class="list act-list">${actsOf(x.id).map(a => actRow(a, false)).join('') || '<li class="empty">No tasks or meetings yet.</li>'}</ul>
         <div class="actions"><button class="secondary" id="addTask">+ Task</button><button class="secondary" id="addMeeting">+ Meeting</button><button class="secondary" id="logMeeting">Log past meeting</button></div>
+        ${x.stage === 'Won' ? '' : invoiceSection(x, false)}
         <h3>Activity notes</h3>
         ${noteList(x.notes)}
         <div class="note-add"><input id="noteText" placeholder="Add a note" aria-label="Add a note"><button class="secondary" id="addNote">Add</button></div>`}
@@ -422,6 +436,7 @@
       $('#addTask').onclick = () => openActivity(x.id, 'task');
       $('#addMeeting').onclick = () => openActivity(x.id, 'meeting');
       $('#logMeeting').onclick = () => openActivity(x.id, 'meeting', null, true);
+      $('#addInvoice').onclick = () => openInvoice(null, x.id);
       $('#noteText').onkeydown = e => { if (e.key === 'Enter') add(); };
     }
   }
@@ -729,6 +744,232 @@
     }
   }
 
+  // ---------- Invoices ----------
+  // Built into the CRM, no paid service. Numbers (FV-0001, ...) come from the database so two people never get the same one.
+  // Amounts only come from the deal value or what someone types. Nothing is deleted: an invoice is voided instead.
+  let invFilter = 'all';
+  const round2 = n => Math.round((+n || 0) * 100) / 100;
+  const invFromDb = r => ({ id: r.id, dealId: r.deal_id, contactId: r.contact_id, number: r.number, issueDate: r.issue_date || '', dueDate: r.due_date || '', status: r.status, items: r.items || [], taxRate: r.tax_rate == null ? 13 : +r.tax_rate, notes: r.notes || '', sentAt: r.sent_at, paidAt: r.paid_at, createdAt: r.created_at, createdBy: r.created_by || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '' });
+  const invToDb = v => ({ deal_id: v.dealId || null, contact_id: v.contactId || null, number: v.number, issue_date: v.issueDate || d(0), due_date: v.dueDate || null, status: v.status, items: v.items, tax_rate: v.taxRate, notes: v.notes, sent_at: v.sentAt || null, paid_at: v.paidAt || null, ...(companyId ? { company_id: companyId } : {}) });
+  const settingsFromDb = r => ({ businessName: r.business_name, address: r.address, phone: r.phone, hstNumber: r.hst_number || '', paymentInstructions: r.payment_instructions || '', daysToPay: r.days_to_pay ?? 30, nextNumber: r.next_number || 1 });
+  const settingsToDb = s => ({ business_name: s.businessName, address: s.address, phone: s.phone, hst_number: s.hstNumber, payment_instructions: s.paymentInstructions, days_to_pay: s.daysToPay });
+  function invCalc(v) {
+    const lines = v.items.map(i => round2((+i.qty || 0) * (+i.price || 0)));
+    const sub = round2(lines.reduce((a, b) => a + b, 0)), tax = round2(sub * (+v.taxRate || 0) / 100);
+    return { lines, sub, tax, total: round2(sub + tax) };
+  }
+  const invOverdue = v => v.status === 'Sent' && v.dueDate && daysFrom(v.dueDate) < 0;
+  const invPill = v => invOverdue(v) ? `<span class="pill red">Overdue ${-daysFrom(v.dueDate)}d</span>` : `<span class="pill ${{ Sent: 'blue', Paid: 'green' }[v.status] || ''}">${esc(v.status)}</span>`;
+  const invDeal = v => deals.find(x => x.id === v.dealId);
+  const invContact = v => contacts.find(k => k.id === v.contactId) || (invDeal(v) ? contactOf(invDeal(v)) : {});
+  const longDate = iso => iso ? new Date(localDay(iso) + 'T00:00:00').toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+  const invRow = v => `<li class="row" data-inv="${v.id}"><div class="row-main"><div class="row-title">${esc(v.number)}</div><div class="row-sub">Issued ${fmtDate(v.issueDate)}${v.dueDate ? ` · due ${fmtDate(v.dueDate)}` : ''}</div></div><div class="row-meta"><b class="num">${money2(invCalc(v).total)}</b> ${invPill(v)}</div></li>`;
+  function invoiceSection(x, won) {
+    const list = invoices.filter(v => v.dealId === x.id).sort((a, b) => b.id - a.id);
+    return `<h3>Invoices</h3>
+      ${won && !list.length ? '<p class="draft-meta">This deal is won. Invoice the customer from here.</p>' : ''}
+      <ul class="list act-list">${list.map(invRow).join('') || '<li class="empty">No invoices yet.</li>'}</ul>
+      <div class="actions"><button class="${won ? 'primary' : 'secondary'}" id="addInvoice">+ Invoice</button></div>`;
+  }
+  const br = s => esc(s).replace(/\n/g, '<br>');
+  // One layout for the printed invoice and the emailed one (inline styles so email apps keep them).
+  function invoiceDoc(v) {
+    const s = invSettings, c = invContact(v), x = invDeal(v), t = invCalc(v);
+    const cell = 'padding:8px 10px;border-bottom:1px solid #e2e6ea;', head = 'font-size:12px;color:#5d6b78;font-weight:700;';
+    return `<div class="inv-doc" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45;color:#16202a;max-width:720px">
+      <table role="presentation" style="width:100%;border-collapse:collapse"><tr>
+        <td style="vertical-align:top;padding:0"><div style="font-size:20px;font-weight:700">${esc(s.businessName)}</div><div style="color:#5d6b78">${br(s.address)}${s.phone ? `<br>${esc(s.phone)}` : ''}${s.hstNumber ? `<br>HST # ${esc(s.hstNumber)}` : ''}</div></td>
+        <td style="vertical-align:top;text-align:right;padding:0"><div style="font-size:22px;font-weight:700;letter-spacing:.04em">${v.status === 'Void' ? 'VOID INVOICE' : 'INVOICE'}</div><div><b>${esc(v.number)}</b></div><div style="color:#5d6b78">Date: <span style="white-space:nowrap">${esc(longDate(v.issueDate))}</span>${v.dueDate ? `<br>Due: <span style="white-space:nowrap">${esc(longDate(v.dueDate))}</span>` : ''}</div></td>
+      </tr></table>
+      <table role="presentation" style="width:100%;border-collapse:collapse;margin-top:22px"><tr>
+        <td style="vertical-align:top;padding:0"><div style="font-size:12px;font-weight:700;color:#5d6b78;text-transform:uppercase;letter-spacing:.05em">Bill to</div><div>${[c.company && `<b>${esc(c.company)}</b>`, esc(c.name), br(c.address), esc(c.email)].filter(Boolean).join('<br>')}</div></td>
+        ${x && x.site ? `<td style="vertical-align:top;padding:0;text-align:right"><div style="font-size:12px;font-weight:700;color:#5d6b78;text-transform:uppercase;letter-spacing:.05em">Job site</div><div>${br(x.site)}</div></td>` : ''}
+      </tr></table>
+      <table style="width:100%;border-collapse:collapse;margin-top:22px">
+        <thead><tr style="background:#f3f5f7"><th style="${cell}${head}text-align:left">Description</th><th style="${cell}${head}text-align:right">Qty</th><th style="${cell}${head}text-align:right">Unit price</th><th style="${cell}${head}text-align:right">Amount</th></tr></thead>
+        <tbody>${v.items.map((i, k) => `<tr><td style="${cell}">${br(i.desc)}</td><td style="${cell}text-align:right">${esc(+i.qty || 0)}</td><td style="${cell}text-align:right;white-space:nowrap">${money2(+i.price || 0)}</td><td style="${cell}text-align:right;white-space:nowrap">${money2(t.lines[k])}</td></tr>`).join('')}</tbody>
+      </table>
+      <table role="presentation" style="width:auto;margin:12px 0 0 auto;border-collapse:collapse;min-width:260px">
+        <tr><td style="padding:4px 10px">Subtotal</td><td style="padding:4px 10px;text-align:right;white-space:nowrap">${money2(t.sub)}</td></tr>
+        <tr><td style="padding:4px 10px">HST (${esc(+v.taxRate || 0)}%)</td><td style="padding:4px 10px;text-align:right;white-space:nowrap">${money2(t.tax)}</td></tr>
+        <tr><td style="padding:8px 10px;font-weight:700;border-top:2px solid #16202a">Total (CAD)</td><td style="padding:8px 10px;text-align:right;font-weight:700;border-top:2px solid #16202a;white-space:nowrap">${money2(t.total)}</td></tr>
+        ${v.status === 'Paid' ? `<tr><td colspan="2" style="padding:6px 10px;text-align:right;color:#1d7a46;font-weight:700">Paid${v.paidAt ? ` on ${esc(longDate(v.paidAt))}` : ''}</td></tr>` : ''}
+      </table>
+      ${s.paymentInstructions && v.status !== 'Paid' && v.status !== 'Void' ? `<div style="margin-top:22px"><div style="font-size:12px;font-weight:700;color:#5d6b78;text-transform:uppercase;letter-spacing:.05em">How to pay</div><div>${br(s.paymentInstructions)}</div></div>` : ''}
+      ${v.notes ? `<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#5d6b78;text-transform:uppercase;letter-spacing:.05em">Notes</div><div>${br(v.notes)}</div></div>` : ''}
+      <p style="margin-top:28px;color:#5d6b78;font-size:13px">Thank you for your business.</p>
+    </div>`;
+  }
+  function invoiceText(v) {
+    const s = invSettings, c = invContact(v), t = invCalc(v);
+    return [`${s.businessName}`, s.address, s.phone, s.hstNumber ? `HST # ${s.hstNumber}` : '', '',
+      `INVOICE ${v.number}`, `Date: ${longDate(v.issueDate)}`, v.dueDate ? `Due: ${longDate(v.dueDate)}` : '', '',
+      'Bill to:', c.company, c.name, c.address, '',
+      ...v.items.map((i, k) => `${i.desc}: ${+i.qty || 0} x ${money2(+i.price || 0)} = ${money2(t.lines[k])}`), '',
+      `Subtotal: ${money2(t.sub)}`, `HST (${+v.taxRate || 0}%): ${money2(t.tax)}`, `Total (CAD): ${money2(t.total)}`,
+      s.paymentInstructions ? `\nHow to pay:\n${s.paymentInstructions}` : '', v.notes ? `\nNotes:\n${v.notes}` : ''].filter(l => l !== undefined && l !== null).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  // Printable view: a full-page invoice on screen with Print / Save as PDF; only the invoice prints (no popup window needed).
+  function openPrint(v) {
+    const el = $('#printArea');
+    el.innerHTML = `<div class="print-tools"><button class="primary" id="printNow">Print / Save as PDF</button><button class="secondary" id="printClose">Close</button><span class="print-hint">In the print box, choose "Save as PDF" to keep a copy.</span></div><div class="print-page">${invoiceDoc(v)}</div>`;
+    el.hidden = false; document.body.classList.add('printing');
+    $('#printClose').onclick = closePrint;
+    $('#printNow').onclick = () => { try { window.print(); } catch { toast('Use your browser menu to print'); } };
+    setTimeout(() => { try { window.print(); } catch { /* the page stays open to print from the menu */ } }, 60);
+  }
+  function closePrint() { $('#printArea').hidden = true; $('#printArea').innerHTML = ''; document.body.classList.remove('printing'); }
+
+  function openInvoice(id, dealId) {
+    const rec = id ? invoices.find(v => v.id === id) : null;
+    const deal = deals.find(x => x.id === (rec ? rec.dealId : dealId));
+    if (!rec && !deal) return;
+    const v = rec ? { ...rec, items: rec.items.map(i => ({ ...i })) } : { id: null, dealId: deal.id, contactId: deal.contactId, number: '', issueDate: d(0), dueDate: d(+invSettings.daysToPay || 0), status: 'Draft', items: [{ desc: deal.title, qty: 1, price: +deal.value || 0 }], taxRate: 13, notes: '', sentAt: null, paidAt: null };
+    const c = invContact(v);
+    const locked = v.status === 'Paid' || v.status === 'Void', dis = locked ? 'disabled' : '';
+    const itemRow = i => `<div class="inv-item"><input class="it-desc" aria-label="Description" placeholder="Description" value="${esc(i.desc)}" ${dis}><input class="it-qty" aria-label="Quantity" placeholder="Qty" type="number" min="0" step="any" value="${esc(i.qty)}" ${dis}><input class="it-price" aria-label="Unit price" placeholder="Unit price" type="number" min="0" step="0.01" value="${esc(i.price)}" ${dis}><span class="it-total num"></span>${locked ? '<span></span>' : '<button type="button" class="icon it-del" aria-label="Remove line" title="Remove line">✕</button>'}</div>`;
+    openDrawer(rec ? `Invoice ${rec.number}` : 'New invoice', `
+      <p class="draft-meta">${deal ? esc(deal.title) + ' · ' : ''}${rec ? `${invPill(rec)}${rec.createdAt ? ` · created ${fmtWhen(rec.createdAt)}${rec.createdBy ? ` by ${esc(nameOf(rec.createdBy))}` : ''}` : ''}${rec.sentAt ? ` · sent ${fmtWhen(rec.sentAt)}` : ''}${rec.paidAt ? ` · paid ${fmtWhen(rec.paidAt)}` : ''}` : 'The invoice number is given when you save.'}</p>
+      ${invSettings.hstNumber ? '' : '<p class="arch-note">No HST registration number in Invoice settings, so it is left off the invoice.</p>'}
+      ${v.status === 'Void' ? '<p class="arch-note">This invoice is void. It is kept for the record.</p>' : ''}
+      ${connectBox()}
+      <h3>Bill to</h3>
+      <div class="static">${[c.company && `<b>${esc(c.company)}</b>`, esc(c.name), br(c.address), esc(c.email)].filter(Boolean).join('<br>') || 'No customer on this deal.'}</div>
+      ${c.email ? '' : '<p class="import-note">Add an email to this contact to email the invoice.</p>'}
+      <form id="invForm" class="fields" style="margin-top:14px">
+        <div class="field"><label for="i-issue">Invoice date</label><input id="i-issue" type="date" value="${esc(v.issueDate)}" ${dis}></div>
+        <div class="field"><label for="i-due">Due date</label><input id="i-due" type="date" value="${esc(v.dueDate)}" ${dis}></div>
+        <div class="field full"><label>Line items</label>
+          <div class="inv-item inv-head" aria-hidden="true"><span>Description</span><span>Qty</span><span>Unit price</span><span>Amount</span><span></span></div>
+          <div id="invItems">${v.items.map(itemRow).join('')}</div>
+          ${locked ? '' : '<div><button type="button" class="secondary" id="addItem">+ Line</button></div>'}</div>
+        <div class="field"><label for="i-tax">HST %</label><input id="i-tax" type="number" min="0" max="100" step="0.01" value="${esc(v.taxRate)}" ${dis}></div>
+        <div class="field full"><div class="inv-totals num" id="invTotals"></div></div>
+        <div class="field full"><label for="i-notes">Notes on the invoice (optional)</label><textarea id="i-notes" ${dis}>${esc(v.notes)}</textarea></div>
+      </form>
+      <div class="actions">
+        ${locked ? '' : `<button class="primary" id="invSave">${v.status === 'Draft' ? 'Save draft' : 'Save changes'}</button>`}
+        <button class="secondary" id="invPrint">Print / Save as PDF</button>
+        ${v.status === 'Void' || !c.email ? '' : `<button class="secondary" id="invEmail">${v.status === 'Draft' ? 'Email invoice' : 'Email again'}</button>`}
+        ${rec && (v.status === 'Draft' || v.status === 'Sent') ? '<button class="secondary" id="invPaid">Mark paid</button>' : ''}
+        ${rec && v.status === 'Paid' ? '<button class="secondary" id="invUnpaid">Mark unpaid</button>' : ''}
+        ${rec && v.status !== 'Void' && v.status !== 'Paid' ? '<button class="secondary danger" id="invVoid">Void</button>' : ''}
+        ${deal ? '<button class="secondary" id="invDeal">Open deal</button>' : ''}
+      </div>`);
+    const readItems = () => [...document.querySelectorAll('#invItems .inv-item')].map(r => ({ desc: r.querySelector('.it-desc').value.trim(), qty: r.querySelector('.it-qty').value === '' ? 0 : +r.querySelector('.it-qty').value, price: r.querySelector('.it-price').value === '' ? 0 : round2(r.querySelector('.it-price').value) }));
+    const read = () => { if (locked) return; v.items = readItems(); v.issueDate = $('#i-issue').value || d(0); v.dueDate = $('#i-due').value; v.taxRate = $('#i-tax').value === '' ? 0 : +$('#i-tax').value; v.notes = $('#i-notes').value.trim(); };
+    const recalc = () => {
+      const items = locked ? v.items : readItems(), t = invCalc({ items, taxRate: locked ? v.taxRate : +$('#i-tax').value || 0 });
+      document.querySelectorAll('#invItems .it-total').forEach((el, k) => { el.textContent = money2(t.lines[k] || 0); });
+      $('#invTotals').innerHTML = `<div><span>Subtotal</span><span>${money2(t.sub)}</span></div><div><span>HST (${esc(locked ? v.taxRate : +$('#i-tax').value || 0)}%)</span><span>${money2(t.tax)}</span></div><div class="inv-grand"><span>Total (CAD)</span><span>${money2(t.total)}</span></div>`;
+    };
+    recalc();
+    const wireItems = () => document.querySelectorAll('#invItems .it-del').forEach(b => b.onclick = () => { if (document.querySelectorAll('#invItems .inv-item').length < 2) { toast('An invoice needs at least one line'); return; } b.closest('.inv-item').remove(); recalc(); });
+    wireItems();
+    if (!locked) {
+      $('#invForm').oninput = recalc;
+      $('#addItem').onclick = () => { $('#invItems').insertAdjacentHTML('beforeend', itemRow({ desc: '', qty: 1, price: '' })); wireItems(); recalc(); $('#invItems .inv-item:last-child .it-desc').focus(); };
+    }
+    const logDeal = text => { if (!deal) return; note(deal, text); saveDeal(deal); };
+    const saveRec = async r => { if (!LIVE) return true; const { error } = await sb.from('invoices').update(invToDb(r)).eq('id', r.id); if (error) { failed(error); return false; } r.updatedBy = myEmail; r.updatedAt = stamp(); return true; };
+    // Saves the form. A new invoice gets its number here. Returns the saved invoice, or null.
+    let cur = rec;
+    async function persist(btn) {
+      if (locked) return cur;
+      read();
+      if (!v.items.length || v.items.some(i => !i.desc)) { toast('Each line needs a description'); return null; }
+      if (v.items.some(i => i.qty < 0 || i.price < 0) || v.taxRate < 0) { toast('Amounts cannot be negative'); return null; }
+      if (v.dueDate && v.dueDate < v.issueDate) { toast('The due date is before the invoice date'); return null; }
+      if (!cur) {
+        if (btn) btn.disabled = true;
+        try {
+          if (LIVE) {
+            const { data, error } = await sb.rpc('crm_next_invoice_number', { company: companyId }); if (error) throw error;
+            v.number = data; v.createdBy = myEmail;
+            [v.id] = await insertRows('invoices', [invToDb(v)]);
+          } else { v.number = `FV-${String(invSettings.nextNumber++).padStart(4, '0')}`; v.id = ++uid; v.createdBy = me || ''; }
+        } catch (err) { if (btn) btn.disabled = false; failed(err); return null; }
+        if (btn) btn.disabled = false;
+        v.createdAt = stamp(); invoices.push(v); cur = v;
+        logDeal(`Invoice ${v.number} created, ${money2(invCalc(v).total)}`);
+        return cur;
+      }
+      Object.assign(cur, v, { id: cur.id, number: cur.number });
+      return (await saveRec(cur)) ? cur : null;
+    }
+    const reopen = r => { render(); openInvoice(r.id); };
+    if (!locked) $('#invSave').onclick = async e => { const r = await persist(e.target); if (r) { toast(`Invoice ${r.number} saved`); reopen(r); } };
+    $('#invPrint').onclick = async e => { const r = await persist(e.target); if (!r) return; if (!rec) reopen(r); openPrint(r); };
+    if ($('#invEmail')) {
+      wireConnect(() => $('#invEmail').click());
+      $('#invEmail').onclick = async e => {
+        const r = await persist(e.target); if (!r) return;
+        if (!rec) reopen(r); // keeps the number on screen if sending stops (for example to connect the mailbox)
+        const t = invCalc(r), first = firstName(c);
+        const intro = `${first ? `Hi ${first},` : 'Hello,'}\n\nPlease find invoice ${r.number} for ${money2(t.total)} below${r.dueDate && r.status !== 'Paid' ? `, due ${longDate(r.dueDate)}` : ''}.${r.status === 'Paid' ? ' It is paid in full. Thank you.' : ''}\n\nThank you for choosing ${invSettings.businessName}.`;
+        const btn = $('#invEmail');
+        const n = await sendEmail(btn, deal, c, { to: c.email, cc: '', subject: `Invoice ${r.number} from ${CO}`, text: `${intro}\n\n${invoiceText(r)}\n\n${sigText()}`, html: `${bodyHtml(intro)}<br>${invoiceDoc(r)}<br>${sigHtml()}` });
+        if (!n) return;
+        if (r.status === 'Draft') r.status = 'Sent';
+        r.sentAt = stamp(); await saveRec(r);
+        logDeal(`Invoice ${r.number} emailed to ${c.email}`);
+        reopen(r);
+      };
+    }
+    if ($('#invPaid')) $('#invPaid').onclick = async e => { const r = await persist(e.target); if (!r) return; r.status = 'Paid'; r.paidAt = stamp(); if (!(await saveRec(r))) return; logDeal(`Invoice ${r.number} marked paid, ${money2(invCalc(r).total)}`); toast(`Invoice ${r.number} marked paid`); reopen(r); };
+    if ($('#invUnpaid')) $('#invUnpaid').onclick = async () => { const r = cur; r.status = r.sentAt ? 'Sent' : 'Draft'; r.paidAt = null; if (!(await saveRec(r))) return; logDeal(`Invoice ${r.number} marked unpaid`); toast('Marked unpaid'); reopen(r); };
+    if ($('#invVoid')) $('#invVoid').onclick = async e => {
+      if (!e.target.dataset.sure) { e.target.dataset.sure = '1'; e.target.textContent = 'Click again to void'; return; }
+      const r = cur; r.status = 'Void'; if (!(await saveRec(r))) return; logDeal(`Invoice ${r.number} voided`); toast(`Invoice ${r.number} voided`); reopen(r);
+    };
+    if ($('#invDeal')) $('#invDeal').onclick = () => openDeal(deal.id);
+  }
+
+  function renderInvoices() {
+    const mine = invoices.filter(v => { const x = invDeal(v); if (who !== 'all' && x && x.owner !== who) return false; if (!query) return true; const c = invContact(v); return [v.number, c.company, c.name, x && x.title].join(' ').toLowerCase().includes(query); });
+    const sum = a => a.reduce((t, v) => t + invCalc(v).total, 0);
+    const sent = mine.filter(v => v.status === 'Sent'), late = sent.filter(invOverdue), ym = d(0).slice(0, 7);
+    const paidMonth = mine.filter(v => v.status === 'Paid' && v.paidAt && localDay(v.paidAt).slice(0, 7) === ym), drafts = mine.filter(v => v.status === 'Draft');
+    const list = mine.filter(v => invFilter === 'all' || (invFilter === 'Overdue' ? invOverdue(v) : v.status === invFilter)).sort((a, b) => b.id - a.id);
+    const month = new Date(today).toLocaleString('en-CA', { month: 'long' });
+    const s = invSettings, n = k => `${k} invoice${k === 1 ? '' : 's'}`;
+    $('#view').innerHTML = `
+      <div class="kpis">
+        <div class="kpi"><div class="label">Outstanding (CAD)</div><div class="value num">${money2(sum(sent))}</div><div class="kpi-sub">${n(sent.length)} sent, not paid</div></div>
+        <div class="kpi ${late.length ? 'alert' : ''}"><div class="label">Overdue (CAD)</div><div class="value num">${money2(sum(late))}</div><div class="kpi-sub">${n(late.length)} past the due date</div></div>
+        <div class="kpi"><div class="label">Paid in ${month} (CAD)</div><div class="value num">${money2(sum(paidMonth))}</div><div class="kpi-sub">${n(paidMonth.length)}</div></div>
+        <div class="kpi"><div class="label">Drafts</div><div class="value num">${drafts.length}</div><div class="kpi-sub">not sent yet</div></div>
+      </div>
+      <div class="toolbar"><p>${n(list.length)} · open a deal and press + Invoice to add one</p><div class="toolbar-actions"><label class="who"><span>Show</span><select id="invFilter" aria-label="Show invoices">${['all', 'Draft', 'Sent', 'Overdue', 'Paid', 'Void'].map(f => `<option value="${f}" ${f === invFilter ? 'selected' : ''}>${f === 'all' ? 'All' : f}</option>`).join('')}</select></label></div></div>
+      <div class="table-wrap"><table class="inv-table"><thead><tr><th>Invoice</th><th>Customer</th><th class="hide-sm">Deal</th><th class="hide-sm">Due</th><th>Total</th><th>Status</th></tr></thead>
+      <tbody>${list.map(v => { const c = invContact(v), x = invDeal(v); return `<tr data-inv="${v.id}"><td><b>${esc(v.number)}</b></td><td class="inv-cust">${esc(c.company || '—')}</td><td class="hide-sm">${esc(x ? x.title : '—')}</td><td class="hide-sm num">${fmtDate(v.dueDate)}</td><td class="num">${money2(invCalc(v).total)}</td><td>${invPill(v)}</td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">${invoices.length ? 'No invoices match.' : 'No invoices yet. Open a deal and press + Invoice.'}</td></tr>`}</tbody></table></div>
+      <div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Invoice settings</h2><span class="count">next number FV-${String(s.nextNumber).padStart(4, '0')}</span></div>
+        <form id="invSettings" class="fields inv-settings">
+          <div class="field"><label for="s-name">Business name</label><input id="s-name" value="${esc(s.businessName)}"></div>
+          <div class="field"><label for="s-phone">Phone</label><input id="s-phone" value="${esc(s.phone)}"></div>
+          <div class="field full"><label for="s-addr">Address</label><textarea id="s-addr">${esc(s.address)}</textarea></div>
+          <div class="field"><label for="s-hst">HST registration number</label><input id="s-hst" value="${esc(s.hstNumber)}" placeholder="e.g. 123456789 RT0001"></div>
+          <div class="field"><label for="s-days">Days to pay (due date)</label><input id="s-days" type="number" min="0" max="365" value="${esc(s.daysToPay)}"></div>
+          <div class="field full"><label for="s-pay">Payment instructions (shown on the invoice)</label><textarea id="s-pay" placeholder="e.g. e-Transfer to … or cheque payable to …">${esc(s.paymentInstructions)}</textarea></div>
+          <div class="field full"><div class="actions" style="margin-top:0"><button type="button" class="primary" id="saveInvSettings">Save settings</button></div></div>
+        </form></div>`;
+    $('#invFilter').onchange = e => { invFilter = e.target.value; render(); };
+    $('#saveInvSettings').onclick = async e => {
+      const days = Math.round(+$('#s-days').value);
+      const v = { businessName: $('#s-name').value.trim(), phone: $('#s-phone').value.trim(), address: $('#s-addr').value.trim(), hstNumber: $('#s-hst').value.trim(), paymentInstructions: $('#s-pay').value.trim(), daysToPay: days };
+      if (!v.businessName) { $('#s-name').focus(); toast('Add the business name'); return; }
+      if (!(days >= 0 && days <= 365)) { $('#s-days').focus(); toast('Days to pay is 0 to 365'); return; }
+      if (LIVE) {
+        e.target.disabled = true;
+        let { data, error } = await sb.from('invoice_settings').update(settingsToDb(v)).eq('company_id', companyId).select('company_id');
+        if (!error && !data.length) ({ error } = await sb.from('invoice_settings').insert({ company_id: companyId, ...settingsToDb(v) }));
+        e.target.disabled = false;
+        if (error) return failed(error);
+      }
+      Object.assign(invSettings, v); toast('Invoice settings saved'); render();
+    };
+  }
+
   // ---------- CSV export ----------
   function csv(rows) { return rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n'); }
   function download(name, text) {
@@ -834,6 +1075,8 @@
     if (ad) { e.stopPropagation(); const a = acts.find(z => z.id === +ad.dataset.actdone); return a && toggleActDone(a); }
     const ar = e.target.closest('[data-act]');
     if (ar) { const a = acts.find(z => z.id === +ar.dataset.act); return a && openActivity(a.dealId, a.kind, a.id); }
+    const iv = e.target.closest('[data-inv]');
+    if (iv) return openInvoice(+iv.dataset.inv);
     const done = e.target.closest('[data-done]');
     if (done) { e.stopPropagation(); return completeFollowUp(deals.find(x => x.id === +done.dataset.done)); }
     const deal = e.target.closest('[data-deal]');
@@ -841,7 +1084,7 @@
     const contact = e.target.closest('[data-contact]');
     if (contact) return openContact(+contact.dataset.contact);
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#printArea').hidden) return closePrint(); if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
 
   // ---------- Sign-in screen, account links, refresh ----------
   const gateMsg = (m, ok) => { const el = $('#gateMsg'); el.textContent = m; el.hidden = !m; el.className = ok ? 'gate-ok' : 'import-error'; };
