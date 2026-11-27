@@ -442,6 +442,8 @@
   // Signatures pasted from Outlook or webmail keep their logo, colours and links; anything that could run code is removed.
   const SAFE_TAGS = new Set('A B BR DIV FONT HR I IMG LI OL P SPAN STRONG EM U UL TABLE TBODY THEAD TR TD TH CENTER SMALL SUB SUP H1 H2 H3 H4'.split(' '));
   const SAFE_ATTR = new Set(['href', 'src', 'alt', 'width', 'height', 'style', 'color', 'size', 'face', 'align', 'valign', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'title', 'target']);
+  // A logo pasted from Outlook is often embedded in the email, not linked, and is lost on paste. Use the hosted ForceVision signature logo instead.
+  const SIG_LOGO = 'https://forcevision.ca/signature/logo-email-e88828.png?v=1';
   function cleanHtml(html) {
     const root = new DOMParser().parseFromString(`<div>${String(html).replace(/<!--[\s\S]*?-->/g, '')}</div>`, 'text/html').body.firstChild;
     const walk = el => [...el.children].forEach(ch => {
@@ -452,6 +454,7 @@
         if (!SAFE_ATTR.has(n) || ((n === 'href' || n === 'src') && !/^(https?:|mailto:|tel:)/i.test(v)) || (n === 'style' && /expression|url\(|javascript/i.test(v))) ch.removeAttribute(a.name); });
     });
     walk(root);
+    root.querySelectorAll('img').forEach(i => { if (!/^https?:/i.test(i.getAttribute('src') || '')) { i.setAttribute('src', SIG_LOGO); if (!i.getAttribute('alt')) i.setAttribute('alt', 'ForceVision'); if (!/max-width|width/i.test(i.getAttribute('style') || '') && !i.getAttribute('width')) i.setAttribute('width', '160'); } });
     return root.innerHTML.trim();
   }
   const bodyHtml = t => `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45">${esc(t).replace(/\n/g, '<br>')}</div>`;
@@ -528,14 +531,14 @@
       box.scrollIntoView({ block: 'nearest' }); focus();
     });
     wireConnect(() => $('#m-subject').focus());
+    $('#sig-rich').addEventListener('paste', e => { const h = e.clipboardData && e.clipboardData.getData('text/html'); if (!h) return; e.preventDefault(); document.execCommand('insertHTML', false, cleanHtml(h)); });
     $('#mSigBtn').onclick = () => { $('#sigBox').hidden = !$('#sigBox').hidden; if (!$('#sigBox').hidden) $('#sig-rich').focus(); };
     $('#sigSave').onclick = async e => {
       const ed = $('#sig-rich'), html = cleanHtml(ed.innerHTML), sig = ed.innerText.replace(/\n{3,}/g, '\n\n').trim();
-      const local = [...ed.querySelectorAll('img')].some(i => !/^https?:/i.test(i.getAttribute('src') || ''));
       if (LIVE) { e.target.disabled = true; const { error } = await sb.rpc('crm_set_signature', { sig, sig_html: sig ? html : '' }); e.target.disabled = false; if (error) { toast('Signature not saved. Try again.'); return; } }
       mySig = sig; mySigHtml = sig ? html : '';
       $('#sigPreview').innerHTML = sigHtml(); $('#sigBox').hidden = true;
-      toast(local ? 'Saved, but the logo is not a web link, so it may not show. Copy it from a received email instead.' : 'Signature saved');
+      toast('Signature saved');
     };
     $('#mApp').onclick = e => { e.currentTarget.href = mailHref($('#m-to').value, $('#m-subject').value, $('#m-body').value); };
     $('#m-usesig').onchange = e => { $('#sigPreview').hidden = !e.target.checked; };
@@ -831,7 +834,7 @@
     const [m, co] = await Promise.all([sb.from('members').select('company_id,email,name,is_owner,signature,signature_html'), sb.from('companies').select('id,name').order('id')]);
     const mine = !m.error && !co.error ? m.data.filter(r => r.email.toLowerCase() === email) : [];
     if (!mine.length) { await sb.auth.signOut(); $('#gate').hidden = false; gateMsg('This email is not on any company team list. Ask Zoltan to add you.'); return; }
-    members = m.data; myEmail = email; mySig = mine[0].signature || ''; mySigHtml = mine[0].signature_html || '';
+    members = m.data; myEmail = email; mySig = mine[0].signature || ''; mySigHtml = mine[0].signature_html ? cleanHtml(mine[0].signature_html) : '';
     myCompanies = co.data.filter(c => mine.some(r => r.company_id === c.id));
     members.forEach(t => { teamNames[t.email.toLowerCase()] = t.name; });
     await setCompany(myCompanies[0].id);
