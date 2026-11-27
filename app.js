@@ -187,6 +187,7 @@
       curCall = call; muted = false;
       if (call.direction === 'inbound') { const num = call.options && (call.options.remoteCallerNumber || call.options.callerNumber); const c = byPhone(num); callCtx = { dir: 'in', number: num || 'Unknown', name: c ? `${c.name || c.company}${c.name && c.company ? ', ' + c.company : ''}` : '', contactId: c ? c.id : null, dealId: null }; }
     }
+    if (callCtx && ['ringing', 'early', 'active'].includes(call.state) && callCtx.dir === 'out') callCtx.rang = true;
     if (call.state === 'active' && !callStart) { startRec(call); callStart = Date.now(); clearInterval(callTick); callTick = setInterval(() => { const t = $('#callTime'); if (t) t.textContent = mmss(Date.now() - callStart); }, 1000); }
     if (call.state === 'hangup' || call.state === 'destroy') { if (callCtx) callCtx.why = [call.sipCode, call.sipReason || call.cause].filter(Boolean).join(' '); return finishCall(); }
     showCall(call.state);
@@ -233,10 +234,11 @@
     if (!callCtx) return;
     clearInterval(callTick);
     const ctx = callCtx, talked = callStart ? Date.now() - callStart : 0;
+    const failedOut = ctx.dir === 'out' && !talked && (!ctx.rang || (/^(4\d\d|5\d\d|6\d\d)\b/.test(ctx.why || '') && !/^(408|480|486|487|603)\b/.test(ctx.why || '')));
     callCtx = null; curCall = null; callStart = 0; muted = false;
-    callBar(`<div class="call-main"><div class="call-who">${ctx.name ? esc(ctx.name) : `<span class="num">${esc(prettyNum(ctx.number))}</span>`}</div><div class="call-state">${talked ? `Call ended · ${durText(talked)}` : ctx.dir === 'in' ? 'Missed call' : 'No answer'}</div></div><div class="call-btns"><button class="secondary" id="callClose">Close</button></div>`);
+    callBar(`<div class="call-main"><div class="call-who">${ctx.name ? esc(ctx.name) : `<span class="num">${esc(prettyNum(ctx.number))}</span>`}</div><div class="call-state">${talked ? `Call ended · ${durText(talked)}` : ctx.dir === 'in' ? 'Missed call' : failedOut ? 'Did not go through' : 'No answer'}</div></div><div class="call-btns"><button class="secondary" id="callClose">Close</button></div>`);
     $('#callClose').onclick = () => callBar('');
-    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} ${ctx.dir === 'in' ? 'on' : 'at'} ${prettyNum(ctx.number)}${ctx.ext ? ` ext. ${ctx.ext}` : ''}${ctx.kind === 'mobile' ? ' (mobile)' : ''} · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : 'no answer'}`;
+    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} ${ctx.dir === 'in' ? 'on' : 'at'} ${prettyNum(ctx.number)}${ctx.ext ? ` ext. ${ctx.ext}` : ''}${ctx.kind === 'mobile' ? ' (mobile)' : ''} · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : failedOut ? 'did not go through' : 'no answer'}`;
     const x = ctx.dealId ? deals.find(z => z.id === ctx.dealId) : null;
     const c = ctx.contactId ? contacts.find(k => k.id === ctx.contactId) : null;
     if (x) { note(x, line); saveDeal(x); }
@@ -247,8 +249,7 @@
     // Reopen the record with the call note box ready, so the outcome is written down while it is fresh.
     if (x && talked) { openDeal(x.id); const box = $('#logCallBox'); if (box) { box.hidden = false; $('#callNote').focus(); } }
     else if (c && !$('#drawer').hidden) openContact(c.id);
-    const refused = ctx.dir === 'out' && !talked && /^(4\d\d|5\d\d|6\d\d)\b/.test(ctx.why || '') && !/^(408|480|486|487|603)\b/.test(ctx.why || '');
-    if (refused) toast(`The call did not go through (${ctx.why}). While the phone account is on trial it can only call your own cell.`);
+    if (failedOut) toast(`The call did not go through${ctx.why ? ` (${ctx.why})` : ''}. While the phone account is on trial it can only call your own cell.`);
     else toast(x || c ? 'Call saved to the notes' : 'Call ended');
   }
   async function dial(number, ctx) {
