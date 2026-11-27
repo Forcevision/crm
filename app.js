@@ -51,7 +51,7 @@
   ];
   acts[0].location = (deals.find(x => x.id === 12) || {}).site || '';
   // Invoices (sample): amounts only come from the deal value or what someone types.
-  const INV_DEFAULTS = { businessName: 'ForceVision Inc.', address: '2390 Prospect St., Burlington, ON L7R 2A8', phone: '(289) 288-3954', hstNumber: '', paymentInstructions: '', daysToPay: 30, nextNumber: 1 };
+  const INV_DEFAULTS = { businessName: 'ForceVision', address: '2390 Prospect St., Burlington, ON L7R 2A8', phone: '(289) 288-3954', hstNumber: '', paymentInstructions: '', daysToPay: 30, nextNumber: 1 };
   let invSettings = { ...INV_DEFAULTS, nextNumber: 2 };
   let invoices = [
     { id: 1, dealId: 17, contactId: 7, number: 'FV-0001', issueDate: d(-6), dueDate: d(24), status: 'Sent', items: [{ desc: 'Shop floor safety cameras', qty: 1, price: 14500 }], taxRate: 13, notes: '', sentAt: at(-6, 10), paidAt: null, createdAt: at(-6, 9), createdBy: 'Zoltan' },
@@ -468,7 +468,7 @@
   // Sent by the notify function from the signed-in person's own forcevision.ca mailbox (a copy goes to their Sent folder),
   // then saved in the deal notes and the contact's notes so the whole team sees it. The demo sends nothing.
   let mailboxOk = null, mySig = '', mySigHtml = '';
-  const sigText = () => mySig || `${me || ''}\nForceVision Inc.`;
+  const sigText = () => mySig || `${me || ''}\nForceVision`;
   const sigHtml = () => mySigHtml || esc(sigText()).replace(/\n/g, '<br>');
   // Signatures pasted from Outlook or webmail keep their logo, colours and links; anything that could run code is removed.
   const SAFE_TAGS = new Set('A B BR DIV FONT HR I IMG LI OL P SPAN STRONG EM U UL TABLE TBODY THEAD TR TD TH CENTER SMALL SUB SUP H1 H2 H3 H4'.split(' '));
