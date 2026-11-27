@@ -13,7 +13,7 @@
 
   // ---------- Fictional sample data ----------
   let contacts = [
-    { id: 1, company: 'Northgate Logistics (sample)', name: 'Dana Whitfield', title: 'Facilities Manager', email: 'dana@northgate.example', phone: '(555) 010-2001', notes: 'Prefers morning calls.' },
+    { id: 1, company: 'Northgate Logistics (sample)', name: 'Dana Whitfield', title: 'Facilities Manager', email: 'dana@northgate.example', phone: '(555) 010-2001 ext. 12', mobile: '(555) 010-3001', notes: 'Prefers morning calls.' },
     { id: 2, company: 'Lakeview Steel Works (sample)', name: 'Marcus Oyelaran', title: 'Plant Director', email: 'marcus@lakeviewsteel.example', phone: '(555) 010-2002', notes: '' },
     { id: 3, company: 'Harbour Cold Storage (sample)', name: 'Priya Nandakumar', title: 'Operations Lead', email: 'priya@harbourcold.example', phone: '(555) 010-2003', notes: 'Two sites in planning.' },
     { id: 4, company: 'Maple Ridge Auto Parts (sample)', name: 'Tom Brecken', title: 'Owner', email: 'tom@mapleridge.example', phone: '(555) 010-2004', notes: '' },
@@ -99,11 +99,11 @@
   const store = { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } };
   const dealFromDb = r => ({ id: r.id, contactId: r.contact_id, title: r.title, owner: r.owner, site: r.site || '', needs: r.needs || '', value: +r.value || 0, stage: r.stage, nextAction: r.next_action || '', followUp: r.follow_up || '', proposal: r.proposal || '', notes: r.notes || [], createdAt: r.created_at || '', draft: r.draft || undefined, trelloId: r.trello_id || undefined, archived: !!r.archived, wonAt: r.won_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '', stageSince: r.stage_since || r.updated_at || '' });
   const dealToDb = x => ({ contact_id: x.contactId || null, title: x.title, owner: x.owner, site: x.site, needs: x.needs, value: x.value || 0, stage: x.stage, next_action: x.nextAction, follow_up: x.followUp || null, proposal: x.proposal, notes: x.notes, draft: x.draft || null, trello_id: x.trelloId || null, archived: !!x.archived, won_at: x.stage === 'Won' ? (x.wonAt = x.wonAt || new Date().toISOString()) : (x.wonAt = null), ...(companyId ? { company_id: companyId } : {}) });
-  const contactToDb = c => ({ company: c.company, name: c.name, title: c.title, email: c.email, phone: c.phone, address: c.address || '', notes: c.notes || '', log: c.log || [], trello_id: c.trelloId || null, ...(companyId ? { company_id: companyId } : {}) });
+  const contactToDb = c => ({ company: c.company, name: c.name, title: c.title, email: c.email, phone: c.phone, mobile: c.mobile || '', address: c.address || '', notes: c.notes || '', log: c.log || [], trello_id: c.trelloId || null, ...(companyId ? { company_id: companyId } : {}) });
   async function loadAll() {
     const [c, x] = await Promise.all([sb.from('contacts').select('*').eq('company_id', companyId).order('company'), sb.from('deals').select('*').eq('company_id', companyId).order('id')]);
     if (c.error || x.error) throw (c.error || x.error);
-    contacts = c.data.map(r => ({ id: r.id, company: r.company, name: r.name || '', title: r.title || '', email: r.email || '', phone: r.phone || '', address: r.address || '', notes: r.notes || '', log: r.log || [], createdAt: r.created_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '', trelloId: r.trello_id || undefined }));
+    contacts = c.data.map(r => ({ id: r.id, company: r.company, name: r.name || '', title: r.title || '', email: r.email || '', phone: r.phone || '', mobile: r.mobile || '', address: r.address || '', notes: r.notes || '', log: r.log || [], createdAt: r.created_at || '', updatedBy: r.updated_by || '', updatedAt: r.updated_at || '', trelloId: r.trello_id || undefined }));
     deals = x.data.map(dealFromDb);
     const a = await sb.from('activities').select('*').eq('company_id', companyId).order('starts_at');
     if (a.error) throw a.error;
@@ -123,9 +123,17 @@
 
   const note = (x, text, at, list = 'notes') => x[list].push(me ? { at: at || stamp(), text, by: me } : { at: at || stamp(), text });
   const ago = iso => { const m = Math.round((Date.now() - new Date(iso)) / 60000); if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`; const h = Math.round(m / 60); if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`; const n = Math.round(h / 24); return `${n} day${n === 1 ? '' : 's'} ago`; };
-  const telHref = ph => 'tel:' + String(ph || '').replace(/[^\d+]/g, '');
+  // "(905) 555-1234 ext. 204": the extension is split off; the phone dialer gets it after a pause (comma).
+  const splitExt = ph => { const m = String(ph || '').match(/^(.*?)(?:\s*(?:ext\.?|extension|x|#)\s*(\d+))\s*$/i); return m ? [m[1], m[2]] : [String(ph || ''), '']; };
+  const telHref = ph => { const [n, x] = splitExt(ph); return 'tel:' + n.replace(/[^\d+]/g, '') + (x ? ',' + x : ''); };
   const mailHref = (to, subject, body) => `mailto:${encodeURIComponent(to || '').replace(/%40/g, '@')}?subject=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
-  const reachButtons = c => (c.phone ? (phoneOn ? `<button class="secondary" data-call data-num="${esc(c.phone)}">Call</button><a class="secondary btn-link" data-cell href="${esc(telHref(c.phone))}" title="Call from your own phone">Cell</a>` : `<a class="secondary btn-link" data-call href="${esc(telHref(c.phone))}">Call</a>`) : '') + (c.email ? `<button class="secondary" data-compose>Email</button>` : '');
+  const contactNums = c => [['office', c.phone], ['mobile', c.mobile]].filter(n => n[1]);
+  const reachButtons = c => {
+    const nums = contactNums(c), two = nums.length > 1, word = k => two || k === 'mobile' ? ` ${k}` : '';
+    const calls = nums.map(([k, n]) => phoneOn ? `<button class="secondary" data-call data-kind="${k}" data-num="${esc(n)}">Call${word(k)}</button>` : `<a class="secondary btn-link" data-call data-kind="${k}" href="${esc(telHref(n))}">Call${word(k)}</a>`).join('');
+    const cells = phoneOn ? nums.map(([k, n]) => `<a class="secondary btn-link" data-cell data-kind="${k}" href="${esc(telHref(n))}" title="Call from your own phone">Cell${two ? ': ' + k : word(k)}</a>`).join('') : '';
+    return calls + cells + (c.email ? `<button class="secondary" data-compose>Email</button>` : '');
+  };
 
   // ---------- Phone (Telnyx, from the ForceVision 289 number, in the browser) ----------
   // Only signed-in people the notify function allows get this; everyone else keeps the plain tel: link.
@@ -133,7 +141,7 @@
   let phoneOn = false, phone = null, phoneInfo = null, curCall = null, callCtx = null, callStart = 0, callTick = null, muted = false;
   const e164 = n => { const dg = String(n || '').replace(/[^\d]/g, ''); return dg.length === 10 ? '+1' + dg : dg.length === 11 && dg[0] === '1' ? '+' + dg : dg ? '+' + dg : ''; };
   const prettyNum = n => { const dg = String(n || '').replace(/[^\d]/g, '').replace(/^1(?=\d{10}$)/, ''); return dg.length === 10 ? `(${dg.slice(0, 3)}) ${dg.slice(3, 6)}-${dg.slice(6)}` : n; };
-  const byPhone = n => { const k = e164(n); return k ? contacts.find(c => c.phone && e164(c.phone) === k) : null; };
+  const byPhone = n => { const k = e164(n); return k ? contacts.find(c => [c.phone, c.mobile].some(p => p && e164(splitExt(p)[0]) === k)) : null; };
   const mmss = ms => { const t = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
   const durText = ms => { const t = Math.max(0, Math.round(ms / 1000)); const m = Math.floor(t / 60), sec = t % 60; return m ? `${m} min ${sec} s` : `${sec} s`; };
   function loadScript(src) { return new Promise((ok, bad) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = () => bad(new Error('Could not load the phone')); document.head.appendChild(el); }); }
@@ -158,7 +166,8 @@
   }
   function callBar(html) { let b = $('#callBar'); if (!b) { b = document.createElement('div'); b.id = 'callBar'; b.className = 'call-bar'; b.setAttribute('role', 'region'); b.setAttribute('aria-label', 'Phone call'); document.body.appendChild(b); } b.innerHTML = html; b.hidden = !html; return b; }
   function showCall(state) {
-    const who = callCtx.name ? `${esc(callCtx.name)} · <span class="num">${esc(prettyNum(callCtx.number))}</span>` : `<span class="num">${esc(prettyNum(callCtx.number))}</span>`;
+    const numTxt = `<span class="num">${esc(prettyNum(callCtx.number))}${callCtx.ext ? ` ext. ${esc(callCtx.ext)}` : ''}</span>`;
+    const who = callCtx.name ? `${esc(callCtx.name)} · ${numTxt}` : numTxt;
     const label = { new: 'Connecting…', trying: 'Connecting…', requesting: 'Connecting…', recovering: 'Reconnecting…', ringing: callCtx.dir === 'in' ? 'Incoming call' : 'Ringing…', early: 'Ringing…', active: 'Connected', held: 'On hold', hangup: 'Call ended', destroy: 'Call ended' }[state] || state;
     const incoming = callCtx.dir === 'in' && state === 'ringing';
     const live = !['hangup', 'destroy'].includes(state);
@@ -227,7 +236,7 @@
     callCtx = null; curCall = null; callStart = 0; muted = false;
     callBar(`<div class="call-main"><div class="call-who">${ctx.name ? esc(ctx.name) : `<span class="num">${esc(prettyNum(ctx.number))}</span>`}</div><div class="call-state">${talked ? `Call ended · ${durText(talked)}` : ctx.dir === 'in' ? 'Missed call' : 'No answer'}</div></div><div class="call-btns"><button class="secondary" id="callClose">Close</button></div>`);
     $('#callClose').onclick = () => callBar('');
-    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} ${ctx.dir === 'in' ? 'on' : 'at'} ${prettyNum(ctx.number)} · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : 'no answer'}`;
+    const line = `${ctx.dir === 'in' ? 'Incoming call' : 'Call'}${ctx.name ? (ctx.dir === 'in' ? ' from ' : ' to ') + ctx.name : ''} ${ctx.dir === 'in' ? 'on' : 'at'} ${prettyNum(ctx.number)}${ctx.ext ? ` ext. ${ctx.ext}` : ''}${ctx.kind === 'mobile' ? ' (mobile)' : ''} · ${talked ? durText(talked) : ctx.dir === 'in' ? 'missed' : 'no answer'}`;
     const x = ctx.dealId ? deals.find(z => z.id === ctx.dealId) : null;
     const c = ctx.contactId ? contacts.find(k => k.id === ctx.contactId) : null;
     if (x) { note(x, line); saveDeal(x); }
@@ -244,9 +253,9 @@
   }
   async function dial(number, ctx) {
     if (callCtx) { toast('Finish the current call first'); return; }
-    const to = e164(number);
+    const [main, ext] = splitExt(number); const to = e164(main);
     if (!to || to.length < 12) { toast('This phone number does not look complete'); return; }
-    callCtx = { dir: 'out', number: to, name: ctx.name || '', dealId: ctx.dealId || null, contactId: ctx.contactId || null };
+    callCtx = { dir: 'out', number: to, ext, kind: ctx.kind || '', name: ctx.name || '', dealId: ctx.dealId || null, contactId: ctx.contactId || null };
     if (!phone || !phoneInfo.ready) { callCtx = null; toast('The phone is still connecting. Try again in a few seconds, or use Cell.'); return; }
     try { const st = await navigator.mediaDevices.getUserMedia({ audio: true }); st.getTracks().forEach(t => t.stop()); }
     catch (err) { callCtx = null; toast('The browser did not allow the microphone. Allow it for this site (Safari or Chrome), or use Cell.'); return; }
@@ -260,8 +269,8 @@
     const ctxEl = $('#drawerBody'); const dealId = +ctxEl.dataset.ctxDeal || null, contactId = +ctxEl.dataset.ctxContact || null;
     const x = dealId ? deals.find(z => z.id === dealId) : null;
     const c = contacts.find(k => k.id === (x ? x.contactId : contactId));
-    const num = (a.getAttribute('href') || '').replace(/^tel:/, '');
-    const line = `Call${c && c.name ? ` to ${c.name}` : ''} at ${prettyNum(num)} · from ${a.dataset.cell !== undefined ? 'cell' : 'phone'}`;
+    const mob = a.dataset.kind === 'mobile', [n0, x0] = splitExt(c ? (mob ? c.mobile : c.phone) : (a.getAttribute('href') || '').replace(/^tel:/, ''));
+    const line = `Call${c && c.name ? ` to ${c.name}` : ''} at ${prettyNum(n0)}${x0 ? ` ext. ${x0}` : ''}${mob ? ' (mobile)' : ''} · from ${a.dataset.cell !== undefined ? 'cell' : 'phone'}`;
     if (x) { note(x, line); saveDeal(x); }
     else if (c) { note(c, line, null, 'log'); saveContact(c); setTimeout(() => { if (!$('#drawer').hidden && +$('#drawerBody').dataset.ctxContact === c.id) openContact(c.id); }, 300); }
   });
@@ -269,7 +278,7 @@
     const b = e.target.closest('button[data-call]'); if (!b) return;
     const ctxEl = $('#drawerBody'); const dealId = +(ctxEl && ctxEl.dataset.ctxDeal) || null, contactId = +(ctxEl && ctxEl.dataset.ctxContact) || null;
     const c = contacts.find(k => k.id === contactId) || {};
-    dial(b.dataset.num, { name: c.name ? `${c.name}${c.company ? ', ' + c.company : ''}` : c.company || '', dealId, contactId });
+    dial(b.dataset.num, { kind: b.dataset.kind === 'mobile' ? 'mobile' : '', name: c.name ? `${c.name}${c.company ? ', ' + c.company : ''}` : c.company || '', dealId, contactId });
   });
 
   let view = 'today', query = '', who = 'all', showArchived = false;
@@ -351,10 +360,10 @@
   }
 
   function renderContacts() {
-    const list = contacts.filter(c => !query || [c.company, c.name, c.email, c.title].join(' ').toLowerCase().includes(query));
+    const list = contacts.filter(c => !query || [c.company, c.name, c.email, c.title, c.phone, c.mobile].join(' ').toLowerCase().includes(query));
     $('#view').innerHTML = `<div class="toolbar"><p>${list.length} contacts</p><div class="toolbar-actions"><button class="secondary" id="importTrello2">Import from Trello</button><button class="secondary" id="newContact">+ New contact</button></div></div>
       <div class="table-wrap"><table><thead><tr><th>Company</th><th>Contact</th><th class="hide-sm">Title</th><th class="hide-sm">Phone</th><th>Open deals</th></tr></thead>
-      <tbody>${list.map(c => { const open = deals.filter(x => x.contactId === c.id && OPEN.includes(x.stage) && !x.archived); return `<tr data-contact="${c.id}"><td><b>${esc(c.company)}</b></td><td>${esc(c.name)}</td><td class="hide-sm">${esc(c.title)}</td><td class="hide-sm num">${esc(c.phone)}</td><td class="num">${open.length} · ${money(open.reduce((s, x) => s + x.value, 0))}</td></tr>`; }).join('') || '<tr><td colspan="5" class="empty">No matching contacts.</td></tr>'}</tbody></table></div>`;
+      <tbody>${list.map(c => { const open = deals.filter(x => x.contactId === c.id && OPEN.includes(x.stage) && !x.archived); return `<tr data-contact="${c.id}"><td><b>${esc(c.company)}</b></td><td>${esc(c.name)}</td><td class="hide-sm">${esc(c.title)}</td><td class="hide-sm num">${esc(c.phone || c.mobile)}</td><td class="num">${open.length} · ${money(open.reduce((s, x) => s + x.value, 0))}</td></tr>`; }).join('') || '<tr><td colspan="5" class="empty">No matching contacts.</td></tr>'}</tbody></table></div>`;
     $('#newContact').onclick = () => openContact(null);
     $('#importTrello2').onclick = openImport;
   }
@@ -527,7 +536,7 @@
       ${isNew || x.stage !== 'Won' ? '' : invoiceSection(x, true)}
       ${isNew ? '' : `
         <h3>Contact</h3>
-        <div class="static">${esc(c.name)} · ${esc(c.title)}<br><span class="num">${esc(c.phone)}</span> · ${esc(c.email)}</div>
+        <div class="static">${esc(c.name)} · ${esc(c.title)}<br>${[c.phone ? `<span class="num">${esc(c.phone)}</span>` : '', c.mobile ? `<span class="num">${esc(c.mobile)}</span> (mobile)` : '', esc(c.email)].filter(Boolean).join(' · ')}</div>
         <div class="actions reach">${reachButtons(c)}<button class="secondary" id="logCallBtn">Log call</button></div>
         <div id="logCallBox" class="log-call" hidden>
           <div class="field full"><label for="callNote">How did the call go?</label><textarea id="callNote" placeholder="e.g. Spoke with Jeff, install booked for Friday"></textarea></div>
@@ -566,8 +575,7 @@
       const add = () => { const t = $('#noteText').value.trim(); if (!t) return; note(x, t); saveDeal(x); openDeal(x.id); };
       const showLog = () => { $('#logCallBox').hidden = false; $('#callNote').focus(); };
       $('#logCallBtn').onclick = showLog;
-      const callLink = document.querySelector('#drawerBody a[data-call], #drawerBody a[data-cell]');
-      if (callLink) callLink.addEventListener('click', () => setTimeout(showLog, 300));
+      document.querySelectorAll('#drawerBody a[data-call], #drawerBody a[data-cell]').forEach(l => l.addEventListener('click', () => setTimeout(showLog, 300)));
       $('#saveCall').onclick = async () => { const t = $('#callNote').value.trim(); note(x, `Call${c.name ? ` with ${c.name}` : ''}${t ? `: ${t}` : ''}`); if ($('#callFollow').value && $('#callFollow').value !== x.followUp) { note(x, `Follow-up date: ${fmtDate($('#callFollow').value)}`); x.followUp = $('#callFollow').value; } saveDeal(x);
         if ($('#callTask').checked && $('#callFollow').value) {
           const tk = { id: null, dealId: x.id, kind: 'task', title: x.nextAction && x.nextAction !== 'Set next step' ? x.nextAction : `Follow up with ${c.name || c.company || 'customer'}`, startsAt: new Date(`${$('#callFollow').value}T09:00`).toISOString(), endsAt: null, location: '', details: t, assignees: [x.owner || TEAM[0]], inviteCustomer: false, customerEmail: '', remind: 0, logged: false, done: false, status: 'scheduled', createdBy: me || '', createdAt: stamp() };
@@ -852,7 +860,7 @@
   // ---------- Drawer: contact ----------
   function openContact(id) {
     const isNew = id == null;
-    const c = isNew ? { company: '', name: '', title: '', email: '', phone: '', address: '', notes: '', log: [] } : contacts.find(k => k.id === id);
+    const c = isNew ? { company: '', name: '', title: '', email: '', phone: '', mobile: '', address: '', notes: '', log: [] } : contacts.find(k => k.id === id);
     c.log = c.log || [];
     const related = isNew ? [] : deals.filter(x => x.contactId === c.id);
     openDrawer(isNew ? 'New contact' : c.company, `
@@ -862,7 +870,8 @@
         <div class="field"><label for="c-name">Decision-maker</label><input id="c-name" name="name" value="${esc(c.name)}"></div>
         <div class="field"><label for="c-title">Title</label><input id="c-title" name="title" value="${esc(c.title)}"></div>
         <div class="field"><label for="c-email">Email</label><input id="c-email" name="email" type="email" value="${esc(c.email)}"></div>
-        <div class="field"><label for="c-phone">Phone</label><input id="c-phone" name="phone" value="${esc(c.phone)}"></div>
+        <div class="field"><label for="c-phone">Office phone</label><input id="c-phone" name="phone" type="tel" value="${esc(c.phone)}" placeholder="(905) 555-0100 ext. 204"></div>
+        <div class="field"><label for="c-mobile">Mobile</label><input id="c-mobile" name="mobile" type="tel" value="${esc(c.mobile || '')}"></div>
         <div class="field full"><label for="c-address">Address</label><input id="c-address" name="address" value="${esc(c.address)}"></div>
         ${isNew ? '<div class="field full"><label for="c-first">First note (optional)</label><textarea id="c-first" name="first"></textarea></div>' : ''}
       </form>
@@ -871,7 +880,7 @@
     `, isNew ? {} : { contact: c.id });
     $('#saveContact').onclick = async e => {
       const f = new FormData($('#contactForm'));
-      const v = Object.fromEntries(['company', 'name', 'title', 'email', 'phone', 'address'].map(k => [k, String(f.get(k)).trim()]));
+      const v = Object.fromEntries(['company', 'name', 'title', 'email', 'phone', 'mobile', 'address'].map(k => [k, String(f.get(k)).trim()]));
       if (!v.company) { $('#c-company').focus(); toast('Add a company name'); return; }
       if (isNew) {
         const nc = { ...v, notes: '', log: [], createdAt: stamp() }; note(nc, 'Contact created', null, 'log');
@@ -1124,7 +1133,7 @@
     toast(`Exported ${name}`);
   }
   $('#exportOpps').onclick = () => download(`forcevision-deals${LIVE ? '' : '-sample'}.csv`, csv([['Deal', 'Assigned to', 'Company', 'Contact', 'Stage', 'Value CAD', 'Next action', 'Follow-up', 'Site', 'Requirements', 'Proposal'], ...deals.map(x => { const c = contactOf(x); return [x.title, x.owner, c.company, c.name, x.stage, x.value, x.nextAction, x.followUp, x.site, x.needs, x.proposal]; })]));
-  $('#exportContacts').onclick = () => download(`forcevision-contacts${LIVE ? '' : '-sample'}.csv`, csv([['Company', 'Name', 'Title', 'Email', 'Phone', 'Address', 'Notes'], ...contacts.map(c => [c.company, c.name, c.title, c.email, c.phone, c.address, (c.log && c.log.length ? c.log.map(n => `${fmtWhen(n.at)}${n.by ? ` ${n.by}` : ''}: ${n.text}`).join(' | ') : c.notes)])]));
+  $('#exportContacts').onclick = () => download(`forcevision-contacts${LIVE ? '' : '-sample'}.csv`, csv([['Company', 'Name', 'Title', 'Email', 'Office phone', 'Mobile', 'Address', 'Notes'], ...contacts.map(c => [c.company, c.name, c.title, c.email, c.phone, c.mobile || '', c.address, (c.log && c.log.length ? c.log.map(n => `${fmtWhen(n.at)}${n.by ? ` ${n.by}` : ''}: ${n.text}`).join(' | ') : c.notes)])]));
 
   // ---------- Trello import (prototype: board JSON export, in memory, preview before saving) ----------
   const guessStage = name => {
@@ -1175,7 +1184,7 @@
       const checklists = board.checklists || [];
       const newContacts = [], newDeals = [];
       fresh.forEach(card => {
-        const contact = { id: ++uid, trelloId: card.id, company: card.name, name: '', title: '', email: '', phone: '', notes: '', log: [{ at: stamp(), text: 'Imported from Trello' }] };
+        const contact = { id: ++uid, trelloId: card.id, company: card.name, name: '', title: '', email: '', phone: '', mobile: '', notes: '', log: [{ at: stamp(), text: 'Imported from Trello' }] };
         newContacts.push(contact);
         const notes = [];
         const at = card.dateLastActivity || stamp();
